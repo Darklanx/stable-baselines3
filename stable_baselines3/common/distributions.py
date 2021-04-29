@@ -7,7 +7,9 @@ import gym
 import torch as th
 from gym import spaces
 from torch import nn
-from torch.distributions import Bernoulli, Categorical, Normal
+from torch.distributions import Bernoulli, Categorical, Normal 
+from torch.distributions.kl import register_kl
+import torch.nn.functional as F
 
 from stable_baselines3.common.preprocessing import get_action_dim
 
@@ -244,6 +246,62 @@ class SquashedDiagGaussianDistribution(DiagGaussianDistribution):
         action = self.actions_from_params(mean_actions, log_std)
         log_prob = self.log_prob(action, self.gaussian_actions)
         return action, log_prob
+
+class SoftmaxCategorical(Distribution):
+    """
+    Categorical distribution for discrete actions.
+    where probability equals to softmax prob.
+
+    :param action_dim: Number of discrete actions
+    """
+
+    def __init__(self, action_dim: int):
+        super(SoftmaxCategorical, self).__init__()
+        self.distribution = None
+        self.action_dim = action_dim
+
+    def proba_distribution_net(self, latent_dim: int) -> nn.Module:
+        """
+        Create the layer that represents the distribution:
+        it will be the logits of the Categorical distribution.
+        You can then get probabilities using a softmax.
+
+        :param latent_dim: Dimension of the last layer
+            of the policy network (before the action layer)
+        :return:
+        """
+        action_logits = nn.Linear(latent_dim, self.action_dim)
+        return action_logits
+    
+
+    def proba_distribution(self, action_logits: th.Tensor) -> "CategoricalDistribution":
+        
+        probs = F.softmax(action_logits, dim=1)
+        self.distribution = Categorical(probs=probs)
+        return self
+
+    def log_prob(self, actions: th.Tensor) -> th.Tensor:
+        return self.distribution.log_prob(actions)
+
+    def entropy(self) -> th.Tensor:
+        return self.distribution.entropy()
+
+    def sample(self) -> th.Tensor:
+        return self.distribution.sample()
+
+    def mode(self) -> th.Tensor:
+        return th.argmax(self.distribution.probs, dim=1)
+
+    def actions_from_params(self, action_logits: th.Tensor, deterministic: bool = False) -> th.Tensor:
+        # Update the proba distribution
+        self.proba_distribution(action_logits)
+        return self.get_actions(deterministic=deterministic)
+
+    def log_prob_from_params(self, action_logits: th.Tensor) -> Tuple[th.Tensor, th.Tensor]:
+        actions = self.actions_from_params(action_logits)
+        log_prob = self.log_prob(actions)
+        return actions, log_prob
+
 
 
 class CategoricalDistribution(Distribution):
@@ -646,7 +704,7 @@ class TanhBijector(object):
 
 
 def make_proba_distribution(
-    action_space: gym.spaces.Space, use_sde: bool = False, dist_kwargs: Optional[Dict[str, Any]] = None
+    action_space: gym.spaces.Space, use_sde: bool = False, softmax: bool=False, dist_kwargs: Optional[Dict[str, Any]] = None
 ) -> Distribution:
     """
     Return an instance of Distribution for the correct type of action space
@@ -665,7 +723,10 @@ def make_proba_distribution(
         cls = StateDependentNoiseDistribution if use_sde else DiagGaussianDistribution
         return cls(get_action_dim(action_space), **dist_kwargs)
     elif isinstance(action_space, spaces.Discrete):
-        return CategoricalDistribution(action_space.n, **dist_kwargs)
+        if softmax:
+            return SoftmaxCategorical(action_space.n, **dist_kwargs)
+        else:
+            return CategoricalDistribution(action_space.n, **dist_kwargs)
     elif isinstance(action_space, spaces.MultiDiscrete):
         return MultiCategoricalDistribution(action_space.nvec, **dist_kwargs)
     elif isinstance(action_space, spaces.MultiBinary):
