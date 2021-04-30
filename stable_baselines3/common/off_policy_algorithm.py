@@ -15,7 +15,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.save_util import load_from_pkl, save_to_pkl
-from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq, TrainFrequencyUnit
+from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq, TrainFrequencyUnit, Transition
 from stable_baselines3.common.utils import safe_mean, should_collect_more_steps
 from stable_baselines3.common.vec_env import VecEnv
 
@@ -254,6 +254,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         tb_log_name: str = "run",
         eval_log_path: Optional[str] = None,
         reset_num_timesteps: bool = True,
+        use_trajectory_buffer: bool=False
     ) -> "OffPolicyAlgorithm":
 
         total_timesteps, callback = self._setup_learn(
@@ -263,15 +264,22 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         callback.on_training_start(locals(), globals())
 
         while self.num_timesteps < total_timesteps:
+            if use_trajectory_buffer:
+                buffer = self.trajectory_buffer
+            else:
+                buffer = self.replay_buffer
+                
+
             rollout = self.collect_rollouts(
                 self.env,
                 train_freq=self.train_freq,
                 action_noise=self.action_noise,
                 callback=callback,
                 learning_starts=self.learning_starts,
-                replay_buffer=self.replay_buffer,
+                buffer=buffer,
                 log_interval=log_interval,
             )
+            
 
             if rollout.continue_training is False:
                 break
@@ -418,7 +426,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         env: VecEnv,
         callback: BaseCallback,
         train_freq: TrainFreq,
-        replay_buffer: ReplayBuffer,
+        buffer: ReplayBuffer,
         action_noise: Optional[ActionNoise] = None,
         learning_starts: int = 0,
         log_interval: Optional[int] = None,
@@ -458,7 +466,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         while should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
             done = False
             episode_reward, episode_timesteps = 0.0, 0
-
+            
             while not done:
 
                 if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
@@ -470,7 +478,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
 
                 # Rescale and perform action
                 new_obs, reward, done, infos = env.step(action)
-
+                
                 self.num_timesteps += 1
                 episode_timesteps += 1
                 num_collected_steps += 1

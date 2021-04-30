@@ -20,6 +20,16 @@ MaybeCallback = Union[None, Callable, List[callbacks.BaseCallback], callbacks.Ba
 Schedule = Callable[[float], float]
 
 
+class Transition(NamedTuple):
+    observation: th.Tensor
+    action: th.Tensor
+    reward: th.Tensor
+    new_observation: th.Tensor
+    done: bool
+    log_prob: float
+
+
+
 class RolloutBufferSamples(NamedTuple):
     observations: th.Tensor
     actions: th.Tensor

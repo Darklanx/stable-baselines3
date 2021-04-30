@@ -37,7 +37,7 @@ from stable_baselines3.common.utils import get_device, is_vectorized_observation
 from stable_baselines3.common.vec_env.obs_dict_wrapper import ObsDictWrapper
 
 
-class OFFPACPolicy(BasePolicy):
+class OffPACPolicy(BasePolicy):
     """
     Policy class for actor-critic algorithms (has both policy and value prediction).
     Used by A2C, PPO and the likes.
@@ -98,7 +98,7 @@ class OFFPACPolicy(BasePolicy):
             if optimizer_class == th.optim.Adam:
                 optimizer_kwargs["eps"] = 1e-5
 
-        super(OFFPACPolicy, self).__init__(
+        super(OffPACPolicy, self).__init__(
             observation_space,
             action_space,
             features_extractor_class,
@@ -138,7 +138,7 @@ class OFFPACPolicy(BasePolicy):
         self.sde_net_arch = sde_net_arch
         self.use_sde = use_sde
         self.dist_kwargs = dist_kwargs
-        
+        self.q_net, self.q_net_target = None, None    
 
         # Action distribution
         self.action_dist = make_proba_distribution(action_space, use_sde=use_sde, softmax=True, dist_kwargs=dist_kwargs)
@@ -228,7 +228,9 @@ class OFFPACPolicy(BasePolicy):
         else:
             raise NotImplementedError(f"Unsupported distribution '{self.action_dist}'.")
 
-        self.value_net = nn.Linear(self.mlp_extractor.latent_dim_vf, self.action_space.n)
+        self.q_net = nn.Linear(self.mlp_extractor.latent_dim_vf, self.action_space.n)
+        self.q_net_target = nn.Linear(self.mlp_extractor.latent_dim_vf, self.action_space.n)
+        self.q_net_target.load_state_dict(self.q_net.state_dict())
         # Init weights: use orthogonal initialization
         # with small initial weight for the output
         if self.ortho_init:
@@ -240,7 +242,7 @@ class OFFPACPolicy(BasePolicy):
                 self.features_extractor: np.sqrt(2),
                 self.mlp_extractor: np.sqrt(2),
                 self.action_net: 0.01,
-                self.value_net: 1,
+                self.q_net: 1,
             }
             for module, gain in module_gains.items():
                 module.apply(partial(self.init_weights, gain=gain))
@@ -258,7 +260,7 @@ class OFFPACPolicy(BasePolicy):
         """
         latent_pi, latent_vf, latent_sde = self._get_latent(obs)
         # Evaluate the values for the given observations
-        values = self.value_net(latent_vf)
+        values = self.q_net(latent_vf)
         distribution = self._get_action_dist_from_latent(latent_pi, latent_sde=latent_sde)
         actions = distribution.get_actions(deterministic=deterministic)
         log_prob = distribution.log_prob(actions)
@@ -335,12 +337,27 @@ class OFFPACPolicy(BasePolicy):
         """
         latent_pi, latent_vf, latent_sde = self._get_latent(obs)
         distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
-        log_prob = th.gather(distribution.log_prob(actions), dim=1, index=actions.detach().long())
+        # print(th.exp(distribution.log_prob(actions.squeeze())))
+        # for i in range(obs.size(0)):
 
-        Q_values = th.gather(self.value_net(latent_vf), dim=1, index=actions.detach().long())
+        #     latent_pi, latent_vf, latent_sde = self._get_latent(obs[i])
+        #     distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
+        #     print(th.exp(distribution.log_prob(actions[i])))
+        # exit()
+
+        log_prob = distribution.log_prob(actions.squeeze())
+        
+        Q_values = th.gather(self.q_net(latent_vf), dim=1, index=actions.detach().long())
         return Q_values, log_prob, distribution.entropy()
-    
-    def compute_value(self, obs: th.Tensor):
+
+    def get_action_log_probs(self, obs, actions):
+        latent_pi, latent_vf, latent_sde = self._get_latent(obs)
+        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
+        log_probs = distribution.log_prob(actions)
+        return log_probs
+
+
+    def compute_value(self, obs: th.Tensor, q_net: nn.Module):
         """
         Compute V(s)
 
@@ -348,10 +365,15 @@ class OFFPACPolicy(BasePolicy):
         """
         latent_pi, latent_vf, latent_sde = self._get_latent(obs)
         distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
-        Q = self.value_net(latent_vf)
+        Q = q_net(latent_vf)
         actions = th.tensor([[i] for i in range(self.action_space.n)]).to(self.device)
         log_prob = distribution.log_prob(actions)
         prob = th.exp(log_prob).permute(1, 0).detach()
+        try:
+            assert Q.size() == prob.size()
+        except AssertionError as e:
+            print("Q.size(): ", Q.size())
+            print("prob.size(): ", prob.size())
         return th.sum(Q * prob, axis=1)
 
     def get_policy_latent(self, obs: th.Tensor):
@@ -365,7 +387,7 @@ class OFFPACPolicy(BasePolicy):
 
 
 
-class OFFPACCnnPolicy(OFFPACPolicy):
+class OffPACCnnPolicy(OffPACPolicy):
     """
     CNN policy class for actor-critic algorithms (has both policy and value prediction).
     Used by A2C, PPO and the likes.
@@ -441,8 +463,8 @@ class OFFPACCnnPolicy(OFFPACPolicy):
 
 
 
-MlpPolicy = OFFPACPolicy
-CnnPolicy = OFFPACCnnPolicy
+MlpPolicy = OffPACPolicy
+CnnPolicy = OffPACCnnPolicy
 
 register_policy("MlpPolicy", MlpPolicy)
 register_policy("CnnPolicy", CnnPolicy)

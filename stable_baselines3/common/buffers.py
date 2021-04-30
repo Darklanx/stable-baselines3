@@ -414,3 +414,84 @@ class RolloutBuffer(BaseBuffer):
             self.returns[batch_inds].flatten(),
         )
         return RolloutBufferSamples(*tuple(map(self.to_torch, data)))
+
+class TrajectoryBuffer(BaseBuffer):
+    def __init__(
+        self,
+        buffer_size: int,
+        observation_space: spaces.Space,
+        action_space: spaces.Space,
+        device: Union[th.device, str] = "cpu",
+        gamma: float = 0.99,
+    ):
+
+        super(TrajectoryBuffer, self).__init__(buffer_size, observation_space, action_space, device)
+        self.gamma = gamma
+        self.trajectories = []
+        self.reset()
+
+    def reset(self) -> None:
+        self.observations = np.zeros((self.buffer_size, self.n_envs) + self.obs_shape, dtype=np.float32)
+        self.trajectories = []
+        super(TrajectoryBuffer, self).reset()
+
+    def add(
+        self, trajectory
+    ) -> None:
+        """
+        :param obs: Observation
+        :param action: Action
+        :param reward:
+        :param episode_start: Start of episode signal.
+        :param value: estimated value of the current state
+            following the current policy.
+        :param log_prob: log probability of the action
+            following the current policy.
+        """
+        if not self.full:
+            self.trajectories.append(trajectory)
+        else:
+            self.trajectories[self.pos] = trajectory
+        self.pos += 1
+        if self.pos == self.buffer_size:
+            self.pos = 0
+        if len(self.trajectories) == self.buffer_size:
+            self.full = True
+
+    def get(self, batch_size = None):
+        assert self.full, ""
+        indices = np.random.permutation(self.buffer_size)
+        if batch_size is None:
+            batch_size = self.buffer_size 
+
+        start_idx = 0
+        while start_idx < self.buffer_size:
+            yield self._get_samples(indices[start_idx : start_idx + batch_size])
+            start_idx += batch_size
+
+    def _get_samples(self, batch_inds: np.ndarray, env: Optional[VecNormalize] = None) -> RolloutBufferSamples:
+
+        return [self.trajectories[ind] for ind in batch_inds]
+
+class Trajectory:
+    def __init__(self, device):
+        self.states = []
+        self.actions = []
+        self.log_probs = []
+        self.next_states = []
+        self.dones = []
+        self.rewards = []
+        self.device = device
+    
+    def add(self, transition):
+        self.states.append(transition.observation)
+        self.actions.append(transition.action)
+        self.log_probs.append(transition.log_prob)
+        self.next_states.append(transition.new_observation)
+        self.rewards.append(transition.reward)
+        self.dones.append(transition.done)
+    
+    def get_tensors(self):
+        return th.tensor(self.states).to(self.device), th.tensor(self.actions).to(self.device).view(-1, 1), th.tensor(self.rewards).to(self.device), th.tensor(self.next_states).to(self.device), th.tensor(self.dones).to(self.device), th.tensor(self.log_probs, dtype=th.float).to(self.device)
+    def __len__(self):
+        return len(self.dones)
