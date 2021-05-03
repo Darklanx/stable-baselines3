@@ -100,7 +100,11 @@ class BaseBuffer(ABC):
         :return:
         """
         upper_bound = self.buffer_size if self.full else self.pos
-        batch_inds = np.random.randint(0, upper_bound, size=batch_size)
+        if batch_size == self.buffer_size:
+            batch_inds = np.arange(0, upper_bound)
+        else:
+            batch_inds = np.random.randint(0, upper_bound, size=batch_size)
+
         return self._get_samples(batch_inds, env=env)
 
     @abstractmethod
@@ -470,14 +474,16 @@ class TrajectoryBuffer(BaseBuffer):
             start_idx += batch_size
 
     def _get_samples(self, batch_inds: np.ndarray, env: Optional[VecNormalize] = None) -> RolloutBufferSamples:
-
-        return [self.trajectories[ind] for ind in batch_inds]
+        if len(batch_inds) > 1:
+            return [self.trajectories[ind] for ind in batch_inds]
+        else:
+            return [self.trajectories[ind] for ind in batch_inds]
 
 class Trajectory:
     def __init__(self, device):
         self.states = []
         self.actions = []
-        self.log_probs = []
+        self.probs = []
         self.next_states = []
         self.dones = []
         self.rewards = []
@@ -486,12 +492,14 @@ class Trajectory:
     def add(self, transition):
         self.states.append(transition.observation)
         self.actions.append(transition.action)
-        self.log_probs.append(transition.log_prob)
+        self.probs.append(transition.prob)
         self.next_states.append(transition.new_observation)
         self.rewards.append(transition.reward)
         self.dones.append(transition.done)
     
     def get_tensors(self):
-        return th.tensor(self.states).to(self.device), th.tensor(self.actions).to(self.device).view(-1, 1), th.tensor(self.rewards).to(self.device), th.tensor(self.next_states).to(self.device), th.tensor(self.dones).to(self.device), th.tensor(self.log_probs, dtype=th.float).to(self.device)
+        # print(len(self.states))
+        return th.tensor(self.states).squeeze(1).to(self.device), th.tensor(self.actions).to(self.device).view(-1, 1), th.tensor(self.rewards).to(self.device), th.tensor(self.next_states).to(self.device), th.tensor(self.dones).to(self.device), th.tensor(self.probs, dtype=th.float).to(self.device)
+
     def __len__(self):
         return len(self.dones)

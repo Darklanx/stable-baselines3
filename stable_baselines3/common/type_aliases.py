@@ -26,7 +26,7 @@ class Transition(NamedTuple):
     reward: th.Tensor
     new_observation: th.Tensor
     done: bool
-    log_prob: float
+    prob: float
 
 
 

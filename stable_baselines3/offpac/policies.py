@@ -353,7 +353,8 @@ class OffPACPolicy(BasePolicy):
     def get_action_log_probs(self, obs, actions):
         latent_pi, latent_vf, latent_sde = self._get_latent(obs)
         distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
-        log_probs = distribution.log_prob(actions)
+        log_probs_grid = distribution.log_prob(actions)
+        log_probs = th.gather(log_probs_grid, dim=1, index=th.tensor([[i] for i in range(actions.size(0))]).to(self.device))
         return log_probs
 
 
@@ -364,6 +365,7 @@ class OffPACPolicy(BasePolicy):
         :return: V(s)
         """
         latent_pi, latent_vf, latent_sde = self._get_latent(obs)
+
         distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
         Q = q_net(latent_vf)
         actions = th.tensor([[i] for i in range(self.action_space.n)]).to(self.device)
@@ -441,7 +443,7 @@ class OffPACCnnPolicy(OffPACPolicy):
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
     ):
-        super(OFFPACCnnPolicy, self).__init__(
+        super(OffPACCnnPolicy, self).__init__(
             observation_space,
             action_space,
             lr_schedule,

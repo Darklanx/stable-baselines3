@@ -148,11 +148,16 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         to a TrainFreq object.
         """
         if not isinstance(self.train_freq, TrainFreq):
+            if isinstance(self.train_freq, str):
+                split = self.train_freq.strip(')(').split(', ')
+                self.train_freq = tuple([int(split[0]), split[1]])
             train_freq = self.train_freq
-
+            
+                
             # The value of the train frequency will be checked later
             if not isinstance(train_freq, tuple):
                 train_freq = (train_freq, "step")
+                
 
             try:
                 train_freq = (train_freq[0], TrainFrequencyUnit(train_freq[1]))
@@ -163,6 +168,8 @@ class OffPolicyAlgorithm(BaseAlgorithm):
                 raise ValueError(f"The frequency of `train_freq` must be an integer and not {train_freq[0]}")
 
             self.train_freq = TrainFreq(*train_freq)
+            # print(self.train_freq.unit)
+            # exit()
 
     def _setup_model(self) -> None:
         self._setup_lr_schedule()
