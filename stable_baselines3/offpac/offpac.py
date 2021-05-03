@@ -612,7 +612,6 @@ class OffPAC(OffPolicyAlgorithm):
             loss.backward()
             # print(self.policy.action_net)
             # print(self.policy.action_net.weight.grad)
-            print(loss)
             
             # Clip grad norm
             th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
