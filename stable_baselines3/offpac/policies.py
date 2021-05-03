@@ -351,11 +351,18 @@ class OffPACPolicy(BasePolicy):
         return Q_values, log_prob, distribution.entropy()
 
     def get_action_log_probs(self, obs, actions):
+        assert obs.size(0) == actions.size(0)
         latent_pi, latent_vf, latent_sde = self._get_latent(obs)
+
         distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
+
         log_probs_grid = distribution.log_prob(actions)
+        # print("grid")
+        # print(log_probs_grid.size())
+        assert log_probs_grid.size() == (obs.size(0), actions.size(0))
         log_probs = th.gather(log_probs_grid, dim=1, index=th.tensor([[i] for i in range(actions.size(0))]).to(self.device))
         return log_probs
+
 
 
     def compute_value(self, obs: th.Tensor, q_net: nn.Module):

@@ -454,7 +454,7 @@ class BaseAlgorithm(ABC):
         self,
         total_timesteps: int,
         callback: MaybeCallback = None,
-        log_interval: int = 100,
+        log_interval: int = 1000,
         tb_log_name: str = "run",
         eval_env: Optional[GymEnv] = None,
         eval_freq: int = -1,

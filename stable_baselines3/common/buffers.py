@@ -498,8 +498,17 @@ class Trajectory:
         self.dones.append(transition.done)
     
     def get_tensors(self):
-        # print(len(self.states))
+        # print(th.tensor(self.states).size())
         return th.tensor(self.states).squeeze(1).to(self.device), th.tensor(self.actions).to(self.device).view(-1, 1), th.tensor(self.rewards).to(self.device), th.tensor(self.next_states).to(self.device), th.tensor(self.dones).to(self.device), th.tensor(self.probs, dtype=th.float).to(self.device)
 
     def __len__(self):
         return len(self.dones)
+    
+    def reset(self):
+        self.states = []
+        self.actions = []
+        self.probs = []
+        self.next_states = []
+        self.dones = []
+        self.rewards = []
+        

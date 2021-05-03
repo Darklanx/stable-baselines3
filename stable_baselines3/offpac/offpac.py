@@ -1,5 +1,4 @@
 from typing import Any, Dict, Optional, Type, Union, Tuple
-
 import torch as th
 import gym
 from gym import spaces
@@ -159,7 +158,10 @@ class OffPAC(OffPolicyAlgorithm):
         # Select action randomly or according to policy
         if self.num_timesteps < learning_starts and not (self.use_sde and self.use_sde_at_warmup):
             # Warmup phase
-            unscaled_action = np.array([self.action_space.sample()])
+            if self.n_envs == 1:
+                unscaled_action = np.array([self.action_space.sample()])
+            else:
+                unscaled_action = np.array([self.action_space.sample() for i in range(self.n_envs)])
 
         else:
             # Note: when using continuous actions,
@@ -228,10 +230,13 @@ class OffPAC(OffPolicyAlgorithm):
         continue_training = True
 
         while should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
-            done = False
-            episode_reward, episode_timesteps = 0.0, 0
-            trajectory = Trajectory(self.device)
-            while not done:
+            
+            
+            done = np.array([False for i in range(self.n_envs)])
+            # episode_reward, episode_timesteps = 0.0, 0
+            episode_reward, episode_timesteps = [0.0 for i in range(self.n_envs)], [0 for i in range(self.n_envs)]
+            trajectories = [Trajectory(self.device) for i in range(self.n_envs)]
+            while True:
 
                 if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
                     # Sample a new noise matrix
@@ -240,22 +245,23 @@ class OffPAC(OffPolicyAlgorithm):
                 # Select action randomly or according to policy
                 action, buffer_action = self._sample_action(learning_starts, action_noise)
                 # log_probs = self.policy.forward(th.tensor(self._last_obs).to(self.device), th.tensor(action).to(self.device))
-                log_probs = self.policy.get_action_log_probs(th.tensor(self._last_obs).to(self.device), th.tensor([action]).to(self.device))
-                log_prob = log_probs[0].item()
-                prob = th.exp(th.tensor(log_prob))
+                # print(self._last_obs.shape)
+                # print(action.shape)
+                log_probs = self.policy.get_action_log_probs(th.tensor(self._last_obs).to(self.device), th.tensor([action]).T.to(self.device))
+                prob = th.exp(log_probs)
                 prob = (1 - self.exploration_rate) * prob + (self.exploration_rate) * (1.0 / self.action_space.n)
-                if prob > 1:
+
+                if (prob > 1).any():
                     print("prob > 1!!! => Code in offpac.py")
                     print(prob)
                     print(th.tensor(log_prob))
                     exit()
                 new_obs, reward, done, infos = env.step(buffer_action)
-                # print(new_obs.size)
                 # Rescale and perform action
 
                 self.num_timesteps += 1
-                episode_timesteps += 1
-                num_collected_steps += 1
+                # episode_timesteps += list(np.array([1] * self.n_envs) * np.invert(np.array(done)))
+                num_collected_steps += np.sum(np.invert(done))
                 
 
                 # Give access to local variables
@@ -263,13 +269,14 @@ class OffPAC(OffPolicyAlgorithm):
                 # Only stop training if return value is False, not when it is None.
                 if callback.on_step() is False:
                     return RolloutReturn(0.0, num_collected_steps, num_collected_episodes, continue_training=False)
-
-                episode_reward += reward
-                
+                # print(episode_rewards)
                 # Retrieve reward and episode length if using Monitor wrapper
                 self._update_info_buffer(infos, done)
+                # print(prob.size())
+                # print(action.shape)
+                for i in range(len(trajectories)):
+                    trajectories[i].add(Transition(self._last_obs[i], action[i], reward[i], new_obs[i], done[i], prob[i]))
                 
-                trajectory.add(Transition(self._last_obs, action[0], reward[0], new_obs[0], done[0], prob))
                 self._last_obs = new_obs
 
                 self._update_current_progress_remaining(self.num_timesteps, self._total_timesteps)
@@ -285,23 +292,37 @@ class OffPAC(OffPolicyAlgorithm):
                 # if done == True and self._episode_num % 100 == 0:
                     # print("Episode reward: ", episode_reward)
                     # print("Episode timestamp: ", episode_timesteps)
-
-            self._store_transition(buffer, trajectory)
+                # total_timesteps = self.n_envs
+                if done.any():
+                    # print(done)
+                    num_collected_episodes += np.sum(done)
+                    self._episode_num += np.sum(done)
+                    for traj_i, traj in enumerate([trajectories[i] for i in np.arange(len(trajectories))[done]]):
+                        self._store_transition(buffer, traj)
+                       
+                        total_timesteps.append(len(traj))
+                        
+                        trajectories[i].reset()
+                        
+                        episode_rewards.append(episode_reward[traj_i])
+                        episode_reward[traj_i] = 0.0
+                        if log_interval is not None and self._episode_num % log_interval == 0:
+                            self._dump_logs()
+                        
             # print("Episode reward: ", episode_reward)
             # print("Episode timestamp: ", episode_timesteps)
-            if done:
-                num_collected_episodes += 1
-                self._episode_num += 1
-                episode_rewards.append(episode_reward)
-                total_timesteps.append(episode_timesteps)
+            if done.any():
+                
+                # self._episode_num += [1] * self.n_envs
+                # episode_rewards.append(np.array(episode_reward)*done)
+                # total_timesteps.append(np.sum(episode_timesteps))
 
                 if action_noise is not None:
                     action_noise.reset()
 
                 # Log training infos
-                if log_interval is not None and self._episode_num % log_interval == 0:
-                    self._dump_logs()
-
+                
+        
         mean_reward = np.mean(episode_rewards) if num_collected_episodes > 0 else 0.0
 
         callback.on_rollout_end()
@@ -363,7 +384,14 @@ class OffPAC(OffPolicyAlgorithm):
             for traj in trajectories:
                 max_len = max(max_len, len(traj))
                 states, actions, rewards, next_states, dones, probs = traj.get_tensors()
-                
+                '''
+                print("s:", states.size())
+                print("a:", actions.size())
+                print("r:", rewards.size())
+                print("ns:", next_states.size())
+                print("shapes:", dones.size())
+                print("d:", probs.size())
+                '''
                 # KL theta
                 latent, old_distribution = self.policy.get_policy_latent(states)
                 latent = latent - th.mean(latent, dim=1)[0].view(-1,1)
@@ -402,6 +430,8 @@ class OffPAC(OffPolicyAlgorithm):
             traj_log_probs, _ = self.padding_tensor(traj_log_probs, self.device, max_len)
             traj_latents, _ = self.padding_tensor(traj_latents, self.device, max_len)
             # print(traj_latents.size())
+            # print(traj_actions.size())
+            # exit()
             traj_old_latents = traj_latents.clone()
             # traj_old_distributions, _ = self.padding_tensor(traj_old_distributions, self.device)
 
@@ -610,9 +640,13 @@ class OffPAC(OffPolicyAlgorithm):
             # print("policy_loss 2: ", policy_loss / num)
             self.policy.optimizer.zero_grad()
             loss.backward()
+            # print(loss)
             # print(self.policy.action_net)
             # print(self.policy.action_net.weight.grad)
             
+            # # print(self.policy.action_net.weight.grad)
+            # print(loss)
+
             # Clip grad norm
             th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
             self.policy.optimizer.step()
