@@ -488,18 +488,60 @@ class Trajectory:
         self.dones = []
         self.rewards = []
         self.device = device
+
+        self.is_tensor_available = False
     
     def add(self, transition):
-        self.states.append(transition.observation)
-        self.actions.append(transition.action)
+        # self.states.append(th.tensor(transition.observation).squeeze(1).to(self.device))
+        # self.actions.append(th.tensor(transition.action).to(self.device).view(-1, 1))
+        # # self.probs.append(th.tensor(transition.probs, dtype=th.float).to(self.device))
+        # # self.probs.append(0.0) # currently not used
+        # self.next_states.append(th.tensor(transition.new_observation).to(self.device))
+        # self.rewards.append(th.tensor(transition.reward).to(self.device))
+        # self.dones.append(th.tensor(transition.done).to(self.device))
+        # print(type(transition.action))
+        # print(transition.action)
+        # print(np.array(transition.action).copy())
+        self.states.append(transition.observation.copy())
+        self.actions.append(transition.action.copy())
         self.probs.append(transition.prob)
-        self.next_states.append(transition.new_observation)
-        self.rewards.append(transition.reward)
-        self.dones.append(transition.done)
+        self.next_states.append(transition.new_observation.copy())
+        self.rewards.append(transition.reward.copy())
+        self.dones.append(transition.done.copy())
     
-    def get_tensors(self):
+    def get_tensors(self, device=None):
+        if device is None: 
+            device = self.device
+        if self.is_tensor_available == False:
+            '''
+            data = [
+                self.states, 
+                self.actions,
+                self.rewards,
+                self.next_states,
+                self.dones
+            ]
+            self.th_states, self.th_actions, self.th_rewards, self.th_next_states, self.th_dones = tuple(map(self.to_torch, data))
+            '''
+
+            # if device == self.device:
+                # self.is_tensor_available = True
+            with th.no_grad():
+                self.th_states = th.as_tensor(np.array(self.states)).squeeze(1).to(device)
+                self.th_actions = th.as_tensor(np.array(self.actions)).to(device).view(-1, 1)
+                self.th_rewards = th.as_tensor(np.array(self.rewards)).to(device)
+                self.th_next_states = th.as_tensor(np.array(self.next_states)).to(device)
+                self.th_dones = th.as_tensor(np.array(self.dones)).to(device)
+                self.th_probs = th.as_tensor(np.array(self.probs)).to(device)
+                # self.th_states = th.tensor(self.states).squeeze(1).to(device)
+                # self.th_actions = th.tensor(self.actions).to(device).view(-1, 1)
+                # self.th_rewards = th.tensor(self.rewards).to(device)
+                # self.th_next_states = th.tensor(self.next_states).to(device)
+                # self.th_dones = th.tensor(self.dones).to(device)
+
         # print(th.tensor(self.states).size())
-        return th.tensor(self.states).squeeze(1).to(self.device), th.tensor(self.actions).to(self.device).view(-1, 1), th.tensor(self.rewards).to(self.device), th.tensor(self.next_states).to(self.device), th.tensor(self.dones).to(self.device), th.tensor(self.probs, dtype=th.float).to(self.device)
+        return self.th_states, self.th_actions, self.th_rewards, self.th_next_states, self.th_dones, self.th_probs
+        # return th.tensor(self.states).squeeze(1).to(self.device), th.tensor(self.actions).to(self.device).view(-1, 1), th.tensor(self.rewards).to(self.device), th.tensor(self.next_states).to(self.device), th.tensor(self.dones).to(self.device), th.tensor(self.probs, dtype=th.float).to(self.device)
 
     def __len__(self):
         return len(self.dones)
@@ -512,3 +554,16 @@ class Trajectory:
         self.dones = []
         self.rewards = []
         
+    def to_torch(self, array, copy: bool = False) -> th.Tensor:
+        """
+        Convert a numpy array to a PyTorch tensor.
+        Note: it copies the data by default
+
+        :param array:
+        :param copy: Whether to copy or not the data
+            (may be useful to avoid changing things be reference)
+        :return:
+        """
+        if copy:
+            return th.tensor(array).to(self.device)
+        return th.as_tensor(array).to(self.device)

@@ -4,7 +4,7 @@ import random
 from collections import deque
 from itertools import zip_longest
 from typing import Iterable, Optional, Union
-
+import time
 import gym
 import numpy as np
 import torch as th
@@ -18,8 +18,11 @@ except ImportError:
 from stable_baselines3.common import logger
 from stable_baselines3.common.type_aliases import GymEnv, Schedule, TrainFreq, TrainFrequencyUnit
 
-def aaa():
-    print("aaa")
+def get_ms(l=None):
+    if l is not None:
+        l[0] = time.time_ns() / 1e6
+
+    return time.time_ns() / 1e6
     
 def set_random_seed(seed: int, using_cuda: bool = False) -> None:
     """

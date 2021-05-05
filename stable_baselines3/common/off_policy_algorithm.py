@@ -16,7 +16,7 @@ from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.policies import BasePolicy
 from stable_baselines3.common.save_util import load_from_pkl, save_to_pkl
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, RolloutReturn, Schedule, TrainFreq, TrainFrequencyUnit, Transition
-from stable_baselines3.common.utils import safe_mean, should_collect_more_steps
+from stable_baselines3.common.utils import safe_mean, should_collect_more_steps, get_ms
 from stable_baselines3.common.vec_env import VecEnv
 
 
@@ -269,14 +269,17 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         )
 
         callback.on_training_start(locals(), globals())
-
+        if use_trajectory_buffer:
+            buffer = self.trajectory_buffer
+        else:
+            buffer = self.replay_buffer
         while self.num_timesteps < total_timesteps:
             if use_trajectory_buffer:
                 buffer = self.trajectory_buffer
             else:
                 buffer = self.replay_buffer
                 
-
+            ms = get_ms()
             rollout = self.collect_rollouts(
                 self.env,
                 train_freq=self.train_freq,
@@ -286,17 +289,20 @@ class OffPolicyAlgorithm(BaseAlgorithm):
                 buffer=buffer,
                 log_interval=log_interval,
             )
-            
+            # print("collect_time: ", get_ms()-ms)
+
 
             if rollout.continue_training is False:
                 break
-
+            
             if self.num_timesteps > 0 and self.num_timesteps > self.learning_starts:
+                ms = get_ms()
                 # If no `gradient_steps` is specified,
                 # do as many gradients steps as steps performed during the rollout
                 gradient_steps = self.gradient_steps if self.gradient_steps > 0 else rollout.episode_timesteps
                 self.train(batch_size=self.batch_size, gradient_steps=gradient_steps)
-
+                # print('train_time: ', get_ms() - ms)
+                # exit()
         callback.on_training_end()
 
         return self

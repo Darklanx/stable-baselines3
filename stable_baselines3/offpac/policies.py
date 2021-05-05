@@ -339,15 +339,19 @@ class OffPACPolicy(BasePolicy):
         distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
         # print(th.exp(distribution.log_prob(actions.squeeze())))
         # for i in range(obs.size(0)):
-
-        #     latent_pi, latent_vf, latent_sde = self._get_latent(obs[i])
-        #     distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
-        #     print(th.exp(distribution.log_prob(actions[i])))
+            # latent_pi, latent_vf, latent_sde = self._get_latent(obs[i])
+            # distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
+            # print(th.exp(distribution.log_prob(actions[i])))
+        # print()
         # exit()
 
         log_prob = distribution.log_prob(actions.squeeze())
         
         Q_values = th.gather(self.q_net(latent_vf), dim=1, index=actions.detach().long())
+        # print(self.q_net(latent_vf))
+        # print(actions)
+        # print(Q_values)
+        # exit()
         return Q_values, log_prob, distribution.entropy()
 
     def get_action_log_probs(self, obs, actions):
@@ -377,7 +381,9 @@ class OffPACPolicy(BasePolicy):
         Q = q_net(latent_vf)
         actions = th.tensor([[i] for i in range(self.action_space.n)]).to(self.device)
         log_prob = distribution.log_prob(actions)
+        
         prob = th.exp(log_prob).permute(1, 0).detach()
+
         try:
             assert Q.size() == prob.size()
         except AssertionError as e:

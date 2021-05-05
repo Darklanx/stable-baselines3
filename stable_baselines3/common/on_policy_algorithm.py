@@ -11,7 +11,7 @@ from stable_baselines3.common.buffers import RolloutBuffer
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.policies import ActorCriticPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
-from stable_baselines3.common.utils import safe_mean
+from stable_baselines3.common.utils import safe_mean, get_ms
 from stable_baselines3.common.vec_env import VecEnv
 
 
@@ -224,9 +224,11 @@ class OnPolicyAlgorithm(BaseAlgorithm):
         callback.on_training_start(locals(), globals())
 
         while self.num_timesteps < total_timesteps:
+            ms = [0]
+            get_ms(ms)
 
             continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps)
-
+            print("collect_time: ", ms[0] - get_ms(ms))
             if continue_training is False:
                 break
 
@@ -246,6 +248,8 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                 logger.dump(step=self.num_timesteps)
 
             self.train()
+            print("training time: ", ms[0] - get_ms(ms))
+            exit()
 
         callback.on_training_end()
 
