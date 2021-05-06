@@ -54,7 +54,8 @@ def evaluate_policy(
     # Avoid circular import
     from stable_baselines3.common.env_util import is_wrapped
     from stable_baselines3.common.monitor import Monitor
-
+    assert deterministic == False
+    # print(deterministic)
     if isinstance(env, VecEnv):
         assert env.num_envs == 1, "You must pass only one environment when using this function"
         is_monitor_wrapped = is_vecenv_wrapped(env, VecMonitor) or env.env_is_wrapped(Monitor)[0]

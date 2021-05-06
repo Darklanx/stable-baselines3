@@ -157,7 +157,6 @@ class OffPolicyAlgorithm(BaseAlgorithm):
             # The value of the train frequency will be checked later
             if not isinstance(train_freq, tuple):
                 train_freq = (train_freq, "step")
-                
 
             try:
                 train_freq = (train_freq[0], TrainFrequencyUnit(train_freq[1]))

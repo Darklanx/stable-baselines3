@@ -247,10 +247,6 @@ class OffPAC(OffPolicyAlgorithm):
                 # Select action randomly or according to policy
                 with th.no_grad():
                     action, buffer_action = self._sample_action(learning_starts, action_noise)
-                # log_probs = self.policy.forward(th.tensor(self._last_obs).to(self.device), th.tensor(action).to(self.device))
-                # print(self._last_obs.shape)
-                # print(action.shape)
-                
                     log_probs = self.policy.get_action_log_probs(th.tensor(self._last_obs).to(self.device), th.tensor([action]).T.to(self.device))
                     prob = th.exp(log_probs)
                     prob = (1 - self.exploration_rate) * prob + (self.exploration_rate) * (1.0 / self.action_space.n)
@@ -329,7 +325,7 @@ class OffPAC(OffPolicyAlgorithm):
                     if ending:
                         for traj_i, traj in enumerate(self.trajectories):
                             self._store_transition(buffer, traj)
-                            total_timesteps.append(len(traj)) # is this line affecting anything????   
+                            # total_timesteps.append(len(traj)) # is this line affecting anything????   
                             
                             self.trajectories[traj_i] = Trajectory(self.device)
                             
@@ -338,10 +334,10 @@ class OffPAC(OffPolicyAlgorithm):
                         break
                     else:
                         if done.any():
-                            _trajectories = [self.trajectories[i] for i in np.arange(len(self.trajectories))[done]]
-                            for traj_i, traj in enumerate(_trajectories):
-                                self._store_transition(buffer, traj)
-                                total_timesteps.append(len(traj)) # is this line affecting anything????   
+                            traj_indexes = [i for i in np.arange(len(self.trajectories))[done]]
+                            for traj_i in traj_indexes:
+                                self._store_transition(buffer, self.trajectories[traj_i])
+                                # total_timesteps.append(len(traj)) # is this line affecting anything????   
                                 self.trajectories[traj_i] = Trajectory(self.device)
                                 episode_rewards.append(episode_reward[traj_i])
                                 episode_reward[traj_i] = 0.0
@@ -352,10 +348,10 @@ class OffPAC(OffPolicyAlgorithm):
                     if done.any():
                         # if ending, save all trajectories even if not finished
                         # if not ending:
-                        _trajectories = [self.trajectories[i] for i in np.arange(len(self.trajectories))[done]]
-                        for traj_i, traj in enumerate(_trajectories):
-                            self._store_transition(buffer, traj)
-                            total_timesteps.append(len(traj)) # is this line affecting anything????  s 
+                        traj_indexes = [i for i in np.arange(len(self.trajectories))[done]]
+                        for traj_i in traj_indexes:
+                            self._store_transition(buffer, self.trajectories[traj_i])
+                            # total_timesteps.append(len(traj)) # is this line affecting anything???? 
                             
                             self.trajectories[traj_i] = Trajectory(self.device)
                             

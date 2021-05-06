@@ -326,7 +326,7 @@ class BaseAlgorithm(ABC):
                 best_model_save_path=log_path,
                 log_path=log_path,
                 eval_freq=eval_freq,
-                n_eval_episodes=n_eval_episodes,
+                n_eval_episodes=n_eval_episodes
             )
             callback = CallbackList([callback, eval_callback])
 
