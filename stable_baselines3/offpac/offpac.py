@@ -89,6 +89,7 @@ class OffPAC(OffPolicyAlgorithm):
         self.exploration_rate = 0.0
         # Linear schedule will be defined in `_setup_model()`
         self.exploration_schedule = None
+        self.trajectories = [Trajectory(self.device) for i in range(self.n_envs)]
         '''
         # Update optimizer inside the policy if we want to use RMSProp
         # (original implementation) rather than Adam
@@ -234,7 +235,8 @@ class OffPAC(OffPolicyAlgorithm):
             done = np.array([False for i in range(self.n_envs)])
             # episode_reward, episode_timesteps = 0.0, 0
             episode_reward, episode_timesteps = [0.0 for i in range(self.n_envs)], [0 for i in range(self.n_envs)]
-            trajectories = [Trajectory(self.device) for i in range(self.n_envs)]
+            if train_freq.unit == TrainFrequencyUnit.STEP:
+                self.trajectories = [Trajectory(self.device) for i in range(self.n_envs)]
             while True:
 
                 if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
@@ -264,23 +266,25 @@ class OffPAC(OffPolicyAlgorithm):
 
                 self.num_timesteps += self.n_envs
                 # episode_timesteps += list(np.array([1] * self.n_envs) * np.invert(np.array(done)))
-                num_collected_steps += np.sum(np.invert(done))
-                
+                # num_collected_steps += np.sum(np.invert(done))
+                num_collected_steps += self.n_envs
+
 
                 # Give access to local variables
                 callback.update_locals(locals())
                 # Only stop training if return value is False, not when it is None.
                 if callback.on_step() is False:
                     return RolloutReturn(0.0, num_collected_steps, num_collected_episodes, continue_training=False)
-                # print(episode_rewards)
+                
+                episode_reward += reward
                 # Retrieve reward and episode length if using Monitor wrapper
                 self._update_info_buffer(infos, done)
                 # print(prob.size())
                 # print(action.shape)
                 # print(self._last_obs)
-                for i in range(len(trajectories)):
+                for i in range(len(self.trajectories)):
                     # trajectories[i].add(Transition(self._last_obs[i], action[i], reward[i], new_obs[i], done[i], prob[i]))
-                    trajectories[i].add(Transition(self._last_obs[i], action[i], reward[i], new_obs[i], done[i], prob[i])) # prob[i] replaced by 0.0 since currently it's not used
+                    self.trajectories[i].add(Transition(self._last_obs[i], action[i], reward[i], new_obs[i], done[i], prob[i]))
 
                 self._last_obs = new_obs
 
@@ -292,43 +296,97 @@ class OffPAC(OffPolicyAlgorithm):
                 # see https://github.com/hill-a/stable-baselines/issues/900
                 self._on_step()
 
-                
-                # if done == True and self._episode_num % 100 == 0:
-                    # print("Episode reward: ", episode_reward)
-                    # print("Episode timestamp: ", episode_timesteps)
-                # total_timesteps = self.n_envs
-                if done.any():
-                    # print(done)
-                    num_collected_episodes += np.sum(done)
-                    self._episode_num += np.sum(done)
-                    for traj_i, traj in enumerate([trajectories[i] for i in np.arange(len(trajectories))[done]]):
+                '''
+                if not should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
+                    # even if the episdoe is not finished, we store the trajectory because no more steps can be performed
+                    for traj_i, traj in enumerate(trajectories):
                         self._store_transition(buffer, traj)
-                       
                         total_timesteps.append(len(traj))
                         
-                        trajectories[i] = Trajectory(self.device)
+                        trajectories[traj_i] = Trajectory(self.device)
                         
                         episode_rewards.append(episode_reward[traj_i])
                         episode_reward[traj_i] = 0.0
-                    
+                    break
+                '''
+                
+
+
+
+                # store transition of finished episode, but if not more steps can be collected, treat any trajectory as an episode
+                if done.any():
+                    num_collected_episodes += np.sum(done)
+                    self._episode_num += np.sum(done)
                     if log_interval is not None and self._episode_num % log_interval == 0:
                             self._dump_logs()
-                
-                if not should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
-                    break
-                        
-            # print("Episode reward: ", episode_reward)
-            # print("Episode timestamp: ", episode_timesteps)
-            if done.any():
-                
-                # self._episode_num += [1] * self.n_envs
-                # episode_rewards.append(np.array(episode_reward)*done)
-                # total_timesteps.append(np.sum(episode_timesteps))
 
+
+                if train_freq.unit == TrainFrequencyUnit.STEP:
+                    ending = not should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes)
+                    # if ending, save all trajectories, otherwise only save done episode
+                    if ending:
+                        for traj_i, traj in enumerate(self.trajectories):
+                            self._store_transition(buffer, traj)
+                            total_timesteps.append(len(traj)) # is this line affecting anything????   
+                            
+                            self.trajectories[traj_i] = Trajectory(self.device)
+                            
+                            episode_rewards.append(episode_reward[traj_i])
+                            episode_reward[traj_i] = 0.0
+                        break
+                    else:
+                        if done.any():
+                            _trajectories = [self.trajectories[i] for i in np.arange(len(self.trajectories))[done]]
+                            for traj_i, traj in enumerate(_trajectories):
+                                self._store_transition(buffer, traj)
+                                total_timesteps.append(len(traj)) # is this line affecting anything????   
+                                self.trajectories[traj_i] = Trajectory(self.device)
+                                episode_rewards.append(episode_reward[traj_i])
+                                episode_reward[traj_i] = 0.0
+
+
+                elif train_freq.unit == TrainFrequencyUnit.EPISODE:
+                    ending = not should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes)
+                    if done.any():
+                        # if ending, save all trajectories even if not finished
+                        # if not ending:
+                        _trajectories = [self.trajectories[i] for i in np.arange(len(self.trajectories))[done]]
+                        for traj_i, traj in enumerate(_trajectories):
+                            self._store_transition(buffer, traj)
+                            total_timesteps.append(len(traj)) # is this line affecting anything????   
+                            
+                            self.trajectories[traj_i] = Trajectory(self.device)
+                            
+                            episode_rewards.append(episode_reward[traj_i])
+                            episode_reward[traj_i] = 0.0
+                        '''
+                        else:
+                            _trajectories = trajectories
+                        for traj_i, traj in enumerate(_trajectories):
+                            self._store_transition(buffer, traj)
+                            total_timesteps.append(len(traj)) # is this line affecting anything????   
+                            
+                            self.trajectories[traj_i] = Trajectory(self.device)
+                            
+                            episode_rewards.append(episode_reward[traj_i])
+                            episode_reward[traj_i] = 0.0
+                        '''
+                    if ending:
+                        break
+                else:
+                    print(train_freq.unit)
+                    raise Exception("Weird train_freq.unit...")
+                    
+                    exit(-1)
+
+                
+
+
+
+            
+            if done.any():
                 if action_noise is not None:
                     action_noise.reset()
-
-                # Log training infos
                 
         
         mean_reward = np.mean(episode_rewards) if num_collected_episodes > 0 else 0.0
@@ -423,9 +481,11 @@ class OffPAC(OffPolicyAlgorithm):
         for _ in range(gradient_steps):
             
             trajectories = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
+            # print(len(trajectories))
             # The following "all_{}" is for speed up by doing batched .to(device)
 
             all_states, all_actions, all_rewards, all_next_states, all_dones, lengths, all_probs = [], [], [], [],[], [], []
+            # we merge all the trajectories together for batch ".to(device)", later we extract the trajectories by using "lengths:list"
             for i, traj in enumerate(trajectories):
                 states, actions, rewards, next_states, dones, probs = traj.get_tensors(device='cpu')
                 lengths.append(actions.size(0))
@@ -435,6 +495,7 @@ class OffPAC(OffPolicyAlgorithm):
                 all_next_states.append(next_states)
                 all_dones.append(dones)
                 all_probs.append(probs)
+            
             all_states = th.cat(all_states).to(self.device)
             all_actions = th.cat(all_actions).to(self.device)
             all_rewards = th.cat(all_rewards).to(self.device)
@@ -571,6 +632,8 @@ class OffPAC(OffPolicyAlgorithm):
                     Q_rets[:, i] = traj_rewards[:, i] + self.gamma * (th.clamp(traj_rhos[:, i+1], max=1) * (Q_rets[:, i+1] - traj_Q_values[:, i+1]) + traj_values[:, i+1]) 
                     advantages[:, i] = Q_rets[:, i] - traj_values[:, i]
                 Q_rets = Q_rets * masks
+            # print("traj_Q: ",th.flatten(traj_Q_values)[0:5])
+            # print("Q_rets: ", th.flatten(Q_rets)[0:5])
             value_loss = F.mse_loss(th.flatten(traj_Q_values), th.flatten(Q_rets), reduction='mean')
             # value_loss = F.smooth_l1_loss(th.flatten(traj_Q_values), th.flatten(Q_rets), reduction='mean')
 
@@ -847,7 +910,7 @@ class OffPAC(OffPolicyAlgorithm):
         self,
         total_timesteps: int,
         callback: MaybeCallback = None,
-        log_interval: int = 100,
+        log_interval: int = 4,
         eval_env: Optional[GymEnv] = None,
         eval_freq: int = -1,
         n_eval_episodes: int = 5,

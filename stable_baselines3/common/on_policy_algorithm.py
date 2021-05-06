@@ -249,7 +249,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
 
             self.train()
             print("training time: ", ms[0] - get_ms(ms))
-            exit()
+            # exit()
 
         callback.on_training_end()
 

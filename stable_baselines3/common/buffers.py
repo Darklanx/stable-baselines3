@@ -527,6 +527,7 @@ class Trajectory:
             # if device == self.device:
                 # self.is_tensor_available = True
             with th.no_grad():
+                # print(th.as_tensor(self.states).size())
                 self.th_states = th.as_tensor(np.array(self.states)).squeeze(1).to(device)
                 self.th_actions = th.as_tensor(np.array(self.actions)).to(device).view(-1, 1)
                 self.th_rewards = th.as_tensor(np.array(self.rewards)).to(device)

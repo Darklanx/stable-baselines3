@@ -53,7 +53,9 @@ def ts2xy(data_frame: pd.DataFrame, x_axis: str) -> Tuple[np.ndarray, np.ndarray
         (can be X_TIMESTEPS='timesteps', X_EPISODES='episodes' or X_WALLTIME='walltime_hrs')
     :return: the x and y output
     """
+    
     if x_axis == X_TIMESTEPS:
+        
         x_var = np.cumsum(data_frame.l.values)
         y_var = data_frame.r.values
     elif x_axis == X_EPISODES:
