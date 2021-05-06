@@ -237,6 +237,7 @@ class OffPAC(OffPolicyAlgorithm):
             episode_reward, episode_timesteps = [0.0 for i in range(self.n_envs)], [0 for i in range(self.n_envs)]
             if train_freq.unit == TrainFrequencyUnit.STEP:
                 self.trajectories = [Trajectory(self.device) for i in range(self.n_envs)]
+                
             while True:
 
                 if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
@@ -264,10 +265,10 @@ class OffPAC(OffPolicyAlgorithm):
                 new_obs, reward, done, infos = env.step(buffer_action)
                 # Rescale and perform action
 
-                self.num_timesteps += self.n_envs
+                self.num_timesteps += env.num_envs
                 # episode_timesteps += list(np.array([1] * self.n_envs) * np.invert(np.array(done)))
                 # num_collected_steps += np.sum(np.invert(done))
-                num_collected_steps += self.n_envs
+                num_collected_steps += env.num_envs
 
 
                 # Give access to local variables
@@ -287,6 +288,7 @@ class OffPAC(OffPolicyAlgorithm):
                     self.trajectories[i].add(Transition(self._last_obs[i], action[i], reward[i], new_obs[i], done[i], prob[i]))
 
                 self._last_obs = new_obs
+                self._last_episode_starts = done
 
                 self._update_current_progress_remaining(self.num_timesteps, self._total_timesteps)
 
@@ -353,7 +355,7 @@ class OffPAC(OffPolicyAlgorithm):
                         _trajectories = [self.trajectories[i] for i in np.arange(len(self.trajectories))[done]]
                         for traj_i, traj in enumerate(_trajectories):
                             self._store_transition(buffer, traj)
-                            total_timesteps.append(len(traj)) # is this line affecting anything????   
+                            total_timesteps.append(len(traj)) # is this line affecting anything????  s 
                             
                             self.trajectories[traj_i] = Trajectory(self.device)
                             
