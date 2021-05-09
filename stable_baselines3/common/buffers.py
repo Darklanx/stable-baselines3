@@ -435,9 +435,8 @@ class TrajectoryBuffer(BaseBuffer):
         self.reset()
 
     def reset(self) -> None:
-        self.observations = np.zeros((self.buffer_size, self.n_envs) + self.obs_shape, dtype=np.float32)
-        self.trajectories = []
         super(TrajectoryBuffer, self).reset()
+        self.trajectories = []
 
     def add(
         self, trajectory

@@ -7,7 +7,7 @@ from functools import partial
 import gym
 import torch as th
 from torch import nn
-
+import copy
 from stable_baselines3.common.distributions import SquashedDiagGaussianDistribution, StateDependentNoiseDistribution
 from stable_baselines3.common.policies import BasePolicy, ContinuousCritic, create_sde_features_extractor, register_policy
 from stable_baselines3.common.preprocessing import get_action_dim
@@ -77,7 +77,7 @@ class OffPACPolicy(BasePolicy):
         action_space: gym.spaces.Space,
         lr_schedule: Schedule,
         net_arch: Optional[List[Union[int, Dict[str, List[int]]]]] = None,
-        activation_fn: Type[nn.Module] = nn.Tanh,
+        activation_fn: Type[nn.Module] = nn.ReLU,
         ortho_init: bool = True,
         use_sde: bool = False,
         log_std_init: float = 0.0,
@@ -138,7 +138,7 @@ class OffPACPolicy(BasePolicy):
         self.sde_net_arch = sde_net_arch
         self.use_sde = use_sde
         self.dist_kwargs = dist_kwargs
-        self.q_net, self.q_net_target = None, None    
+        self.q_net, self.q_net_target, self.behav_net = None, None, None
 
         # Action distribution
         self.action_dist = make_proba_distribution(action_space, use_sde=use_sde, softmax=True, dist_kwargs=dist_kwargs)
@@ -231,6 +231,10 @@ class OffPACPolicy(BasePolicy):
         self.q_net = nn.Linear(self.mlp_extractor.latent_dim_vf, self.action_space.n)
         self.q_net_target = nn.Linear(self.mlp_extractor.latent_dim_vf, self.action_space.n)
         self.q_net_target.load_state_dict(self.q_net.state_dict())
+        # self.behav_net = nn.Linear(self.mlp_extractor.latent_dim_vf, self.action_space.n)
+        self.behav_net = copy.deepcopy(self.action_net)
+        # self.behav_net.load_state_dict(self.q_net_target.state_dict())
+
         # Init weights: use orthogonal initialization
         # with small initial weight for the output
         if self.ortho_init:
@@ -285,7 +289,7 @@ class OffPACPolicy(BasePolicy):
             latent_sde = self.sde_features_extractor(features)
         return latent_pi, latent_vf, latent_sde
 
-    def _get_action_dist_from_latent(self, latent_pi: th.Tensor, latent_sde: Optional[th.Tensor] = None) -> Distribution:
+    def _get_action_dist_from_latent(self, latent_pi: th.Tensor, latent_sde: Optional[th.Tensor] = None, action_net=None) -> Distribution:
         """
         Retrieve action distribution given the latent codes.
 
@@ -293,7 +297,10 @@ class OffPACPolicy(BasePolicy):
         :param latent_sde: Latent code for the gSDE exploration function
         :return: Action distribution
         """
-        mean_actions = self.action_net(latent_pi)
+        if action_net is None:
+            action_net = self.action_net
+
+        mean_actions = action_net(latent_pi)
 
         if isinstance(self.action_dist, DiagGaussianDistribution):
             return self.action_dist.proba_distribution(mean_actions, self.log_std)
@@ -313,7 +320,7 @@ class OffPACPolicy(BasePolicy):
         else:
             raise ValueError("Invalid action distribution")
 
-    def _predict(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
+    def _predict(self, observation: th.Tensor, deterministic: bool = False, action_net=None) -> th.Tensor:
         """
         Get the action according to the policy for a given observation.
 
@@ -321,8 +328,10 @@ class OffPACPolicy(BasePolicy):
         :param deterministic: Whether to use stochastic or deterministic actions
         :return: Taken action according to the policy
         """
+        if action_net is None:
+            action_net = self.action_net
         latent_pi, _, latent_sde = self._get_latent(observation)
-        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
+        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde, action_net)
         return distribution.get_actions(deterministic=deterministic)
 
     def evaluate_actions(self, obs: th.Tensor, actions: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
@@ -354,11 +363,13 @@ class OffPACPolicy(BasePolicy):
         # exit()
         return Q_values, log_prob, distribution.entropy()
 
-    def get_action_log_probs(self, obs, actions):
+    def get_action_log_probs(self, obs, actions, action_net=None):
         assert obs.size(0) == actions.size(0)
+        if action_net is None:
+            action_net = self.action_net
         latent_pi, latent_vf, latent_sde = self._get_latent(obs)
 
-        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
+        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde, action_net)
 
         log_probs_grid = distribution.log_prob(actions)
         # print("grid")

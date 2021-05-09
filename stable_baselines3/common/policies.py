@@ -107,7 +107,7 @@ class BaseModel(nn.Module, ABC):
         """Helper method to create a features extractor."""
         return self.features_extractor_class(self.observation_space, **self.features_extractor_kwargs)
 
-    def extract_features(self, obs: th.Tensor) -> th.Tensor:
+    def extract_features(self, obs: th.Tensor, features_extractor = None) -> th.Tensor:
         """
         Preprocess the observation if needed and extract features.
 
@@ -116,7 +116,9 @@ class BaseModel(nn.Module, ABC):
         """
         assert self.features_extractor is not None, "No features extractor was set"
         preprocessed_obs = preprocess_obs(obs, self.observation_space, normalize_images=self.normalize_images)
-        return self.features_extractor(preprocessed_obs)
+        if features_extractor is None:
+            features_extractor = self.features_extractor
+        return features_extractor(preprocessed_obs)
 
     def _get_constructor_parameters(self) -> Dict[str, Any]:
         """
@@ -241,6 +243,7 @@ class BasePolicy(BaseModel):
         state: Optional[np.ndarray] = None,
         mask: Optional[np.ndarray] = None,
         deterministic: bool = False,
+        action_net=None
     ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
         """
         Get the policy action and state from an observation (and optional state).
@@ -253,11 +256,15 @@ class BasePolicy(BaseModel):
         :return: the model's action and the next state
             (used in recurrent policies)
         """
+
         # TODO (GH/1): add support for RNN policies
         # if state is None:
         #     state = self.initial_state
         # if mask is None:
         #     mask = [False for _ in range(self.n_envs)]
+        if action_net is None:
+            action_net = self.action_net
+
         if isinstance(observation, dict):
             observation = ObsDictWrapper.convert_dict(observation)
         else:
@@ -273,7 +280,7 @@ class BasePolicy(BaseModel):
 
         observation = th.as_tensor(observation).to(self.device)
         with th.no_grad():
-            actions = self._predict(observation, deterministic=deterministic)
+            actions = self._predict(observation, deterministic=deterministic, action_net=action_net)
         # Convert to numpy
         actions = actions.cpu().numpy()
 
