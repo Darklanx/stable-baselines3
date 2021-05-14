@@ -243,7 +243,7 @@ class BasePolicy(BaseModel):
         state: Optional[np.ndarray] = None,
         mask: Optional[np.ndarray] = None,
         deterministic: bool = False,
-        action_net=None
+        use_behav: bool = False
     ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
         """
         Get the policy action and state from an observation (and optional state).
@@ -262,8 +262,6 @@ class BasePolicy(BaseModel):
         #     state = self.initial_state
         # if mask is None:
         #     mask = [False for _ in range(self.n_envs)]
-        if action_net is None:
-            action_net = self.action_net
 
         if isinstance(observation, dict):
             observation = ObsDictWrapper.convert_dict(observation)
@@ -280,7 +278,7 @@ class BasePolicy(BaseModel):
 
         observation = th.as_tensor(observation).to(self.device)
         with th.no_grad():
-            actions = self._predict(observation, deterministic=deterministic, action_net=action_net)
+            actions = self._predict(observation, deterministic=deterministic, use_behav=use_behav)
         # Convert to numpy
         actions = actions.cpu().numpy()
 
@@ -591,7 +589,7 @@ class ActorCriticPolicy(BasePolicy):
         else:
             raise ValueError("Invalid action distribution")
 
-    def _predict(self, observation: th.Tensor, deterministic: bool = False) -> th.Tensor:
+    def _predict(self, observation: th.Tensor, deterministic: bool = False, use_behav=None) -> th.Tensor:
         """
         Get the action according to the policy for a given observation.
 

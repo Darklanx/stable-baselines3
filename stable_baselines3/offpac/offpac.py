@@ -27,8 +27,8 @@ class OffPAC(OffPolicyAlgorithm):
         buffer_size: int = 1000000,
         learning_starts: int = 50000,
         batch_size: Optional[int] = 32,
-        target_update_interval: int = 10000,
-        behav_update_interval: int = 100000,
+        target_update_interval: int = 10,
+        behav_update_interval: int = 100,
         tau: float = 0.9,
         gamma: float = 0.99,
         ent_coef: float = 0.0,
@@ -49,7 +49,10 @@ class OffPAC(OffPolicyAlgorithm):
         exploration_fraction: float = 0.5,
         exploration_initial_eps: float = 0.9,
         exploration_final_eps: float = 0.05,
-        support_multi_env: bool = True
+        support_multi_env: bool = True,
+        share: bool = True,
+        max_alpha: int = 10,
+        reg_coef: float = 1.0
     ):
 
         super(OffPAC, self).__init__(
@@ -74,8 +77,11 @@ class OffPAC(OffPolicyAlgorithm):
             sde_support=False,
             optimize_memory_usage=optimize_memory_usage,
             supported_action_spaces=(gym.spaces.Discrete,),
-            support_multi_env=support_multi_env
+            support_multi_env=support_multi_env,
+            share=share
         )
+        self.reg_coef = reg_coef
+        self.max_alpha = max_alpha
         self.ent_coef = ent_coef
         self.vf_coef = vf_coef
         self.max_grad_norm = max_grad_norm
@@ -121,6 +127,10 @@ class OffPAC(OffPolicyAlgorithm):
         self.q_net_target = self.policy.q_net_target
         self.behav_net = self.policy.behav_net
         self.action_net = self.policy.action_net
+        self.v_mlp_extractor = self.policy.v_mlp_extractor
+        self.v_mlp_extractor_target = self.policy.v_mlp_extractor_target
+        self.a_mlp_extractor = self.policy.a_mlp_extractor
+        self.a_mlp_extractor_target = self.policy.a_mlp_extractor_target
 
     def _store_transition(
         self, 
@@ -135,7 +145,7 @@ class OffPAC(OffPolicyAlgorithm):
         state: Optional[np.ndarray] = None,
         mask: Optional[np.ndarray] = None,
         deterministic: bool = False,
-        action_net=None
+        use_behav: bool = False
     ) -> Tuple[np.ndarray, Optional[np.ndarray]]:
         """
         Overrides the base_class predict function to include epsilon-greedy exploration.
@@ -147,8 +157,7 @@ class OffPAC(OffPolicyAlgorithm):
         :return: the model's action and the next state
             (used in recurrent policies)
         """
-        if action_net is None:
-            action_net = self.policy.action_net
+        action_net = self.behav_net if use_behav else self.action_net
         if not deterministic and np.random.rand() < self.exploration_rate:
             if is_vectorized_observation(maybe_transpose(observation, self.observation_space), self.observation_space):
                 n_batch = observation.shape[0]
@@ -156,14 +165,13 @@ class OffPAC(OffPolicyAlgorithm):
             else:
                 action = np.array(self.action_space.sample())
         else:
-            action, state = self.policy.predict(observation, state, mask, deterministic, action_net)
+            action, state = self.policy.predict(observation, state, mask, deterministic, use_behav)
         return action, state
 
     def _sample_action(
-        self, learning_starts: int, action_noise: Optional[ActionNoise] = None, action_net=None
+        self, learning_starts: int, action_noise: Optional[ActionNoise] = None, use_behav:bool = False
     ) -> Tuple[np.ndarray, np.ndarray]:
-        if action_net is None:
-            action_net = self.action_net
+        # action_net = self.behav_net if use_target else self.action_net
         # Select action randomly or according to policy
         if self.num_timesteps < learning_starts and not (self.use_sde and self.use_sde_at_warmup):
             # Warmup phase
@@ -176,7 +184,7 @@ class OffPAC(OffPolicyAlgorithm):
             # Note: when using continuous actions,
             # we assume that the policy uses tanh to scale the action
             # We use non-deterministic action in the case of SAC, for TD3, it does not matter
-          unscaled_action, _ = self.predict(self._last_obs, deterministic=False, action_net=action_net)
+          unscaled_action, _ = self.predict(self._last_obs, deterministic=False, use_behav=use_behav)
 
         # Rescale the action from [low, high] to [-1, 1]
         if isinstance(self.action_space, gym.spaces.Box):
@@ -254,8 +262,8 @@ class OffPAC(OffPolicyAlgorithm):
 
                 # Select action randomly or according to policy
                 with th.no_grad():
-                    action, buffer_action = self._sample_action(learning_starts, action_noise, self.behav_net)
-                    log_probs = self.policy.get_action_log_probs(th.tensor(self._last_obs).to(self.device), th.tensor([action]).T.to(self.device), self.behav_net)
+                    action, buffer_action = self._sample_action(learning_starts, action_noise, use_behav=True)
+                    log_probs = self.policy.get_action_log_probs(th.tensor(self._last_obs).to(self.device), th.tensor([action]).T.to(self.device), use_behav=True)
                     # print(self.policy.get_action_log_probs(th.tensor(self._last_obs).to(self.device), th.tensor([action]).T.to(self.device), self.behav_net))
                     # print(self.policy.get_action_log_probs(th.tensor(self._last_obs).to(self.device), th.tensor([action]).T.to(self.device)))
                     prob = th.exp(log_probs)
@@ -291,8 +299,18 @@ class OffPAC(OffPolicyAlgorithm):
                 # print(self._last_obs)
                 for i in range(len(self.trajectories)):
                     # trajectories[i].add(Transition(self._last_obs[i], action[i], reward[i], new_obs[i], done[i], prob[i]))
-                    self.trajectories[i].add(Transition(self._last_obs[i], action[i], reward[i], new_obs[i], done[i], prob[i]))
-
+                    if done[i]:
+                        if infos[i]['terminal_observation'].dtype == np.float64:
+                            self.trajectories[i].add(Transition(self._last_obs[i], action[i], reward[i], infos[i]['terminal_observation'].astype(np.float32), done[i], prob[i]))
+                        else:
+                            self.trajectories[i].add(Transition(self._last_obs[i], action[i], reward[i], infos[i]['terminal_observation'], done[i], prob[i]))
+                        # print(infos[i]['terminal_observation'])
+                        # print(infos[i]['terminal_observation'].dtype)
+                        # print(infos[i]['terminal_observation'].astype(np.float32).dtype)
+                        # exit()
+                    else:
+                        self.trajectories[i].add(Transition(self._last_obs[i], action[i], reward[i], new_obs[i], done[i], prob[i]))
+                    
                 self._last_obs = new_obs
                 self._last_episode_starts = done
 
@@ -302,7 +320,7 @@ class OffPAC(OffPolicyAlgorithm):
                 # and update the exploration schedule
                 # For SAC/TD3, the update is done as the same time as the gradient update
                 # see https://github.com/hill-a/stable-baselines/issues/900
-                # self._on_step()
+                self._on_step()
 
                 '''
                 if not should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
@@ -407,17 +425,26 @@ class OffPAC(OffPolicyAlgorithm):
         """
         This method is called in ``collect_rollouts()`` after each step in the environment.
         """
+        pass
         # if self.num_timesteps % self.target_update_interval == 0:
-        if self.n_backward % self.target_update_interval == 0:
+
+        # self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
+
+    def _on_update(self) -> None:
+        if self._n_updates % self.target_update_interval == 0:
             polyak_update(self.q_net.parameters(), self.q_net_target.parameters(), self.tau)
+            if not self.share:
+                polyak_update(self.v_mlp_extractor.parameters(), self.v_mlp_extractor_target.parameters(), self.tau)
         
-        if self.n_backward % self.behav_update_interval == 0:
+        if self._n_updates % self.behav_update_interval == 0:
             polyak_update(self.action_net.parameters(), self.behav_net.parameters(), tau=1)
+            if not self.share:
+                polyak_update(self.a_mlp_extractor.parameters(), self.a_mlp_extractor_target.parameters(), tau=1)
             self.trajectories = [Trajectory(self.device) for i in range(self.n_envs)]
             self.trajectory_buffer.reset()
-
         self.exploration_rate = self.exploration_schedule(self._current_progress_remaining)
-    
+
+
     def padding_tensor(self, sequences, device, max_len=None):
         """
         :param sequences: list of tensors
@@ -520,7 +547,7 @@ class OffPAC(OffPolicyAlgorithm):
 
 
             traj_states, traj_actions, traj_rewards, traj_dones, traj_values = [], [], [], [], []
-            traj_Q_values, traj_rhos, traj_log_probs = [], [], []
+            traj_Q_values, traj_target_Q_values, traj_rhos, traj_log_probs = [], [], [], []
             traj_latents = []
             max_len = 0
             indexes = []
@@ -563,22 +590,25 @@ class OffPAC(OffPolicyAlgorithm):
                 '''
                 # KL theta
                 
-                latent, old_distribution = self.policy.get_policy_latent(states)
-                latent = latent - th.mean(latent, dim=1)[0].view(-1,1)
-                
+                latent, old_distribution = self.policy.get_policy_latent(states, use_behav=False)
+
+                latent = latent - th.mean(latent, dim=1).view(-1,1)
                 # print("1:")
                 # print(ms[0] - get_ms(ms))
                 if states.dim() == 1:
                     states = states.unsqueeze(0)
 
-                Q_values, log_cur_probs, _  = self.policy.evaluate_actions(states, actions)
+                Q_values, log_cur_probs, _  = self.policy.evaluate_actions(states, actions, use_target_v=False, use_behav=False)
+                
+                with th.no_grad():
+                    target_Q_values, _, _  = self.policy.evaluate_actions(states, actions, use_target_v=True, use_behav=True)
                 # print("2:")
                 # print(ms[0] - get_ms(ms))
                 # print(actions)
                 # print(Q_values)
                 cur_probs = th.exp(log_cur_probs)
                 # compute values of states (and addition last state)
-                values = self.policy.compute_value(th.cat([states, next_states[-1].unsqueeze(0)]), self.q_net) # checked
+                values = self.policy.compute_value(th.cat([states, next_states[-1].unsqueeze(0)]), use_target_v=True, use_behav=True) # checked
                 next_state_value = values[-1]
                 values = values[:-1]
 
@@ -604,6 +634,11 @@ class OffPAC(OffPolicyAlgorithm):
                 traj_dones.append(dones)
                 traj_values.append(values)
                 traj_Q_values.append(Q_values.squeeze(1))
+                '''
+                if self.n_backward % 10 == 0:
+                    print(Q_values[0:5])
+                '''
+                traj_target_Q_values.append(target_Q_values.squeeze(1).detach())
                 traj_rhos.append(rhos)
                 traj_log_probs.append(log_cur_probs)
                 # print("4:")
@@ -622,6 +657,7 @@ class OffPAC(OffPolicyAlgorithm):
             traj_dones, _ = self.padding_tensor(traj_dones, self.device, max_len)
             traj_values, _ = self.padding_tensor(traj_values, self.device, max_len)
             traj_Q_values, _ = self.padding_tensor(traj_Q_values, self.device, max_len)
+            traj_target_Q_values, _ = self.padding_tensor(traj_target_Q_values, self.device, max_len)
             traj_rhos, _ = self.padding_tensor(traj_rhos, self.device, max_len)
             traj_log_probs, _ = self.padding_tensor(traj_log_probs, self.device, max_len)
             traj_latents, _ = self.padding_tensor(traj_latents, self.device, max_len)
@@ -636,8 +672,8 @@ class OffPAC(OffPolicyAlgorithm):
             advantages = th.zeros((num, max_len), dtype=th.float).to(self.device)
             next_state_values = th.tensor(next_state_values).to(self.device)
             alpha = th.zeros((num, max_len), dtype=th.float).to(self.device)
-            if self.n_backward % 10 == 0:
-                print(th.max(traj_rhos))
+            # if self.n_backward % 10 == 0:
+                # print(th.max(traj_rhos))
 
             with th.no_grad():
                 dones = traj_dones[:, -1]
@@ -645,7 +681,7 @@ class OffPAC(OffPolicyAlgorithm):
                 
                 advantages[:, -1] =  Q_rets[:, -1] - traj_values[:, -1]
                 for i in reversed(range(max_len-1)):
-                    Q_rets[:, i] = traj_rewards[:, i] + self.gamma * (th.clamp(traj_rhos[:, i+1], max=1) * (Q_rets[:, i+1] - traj_Q_values[:, i+1]) + traj_values[:, i+1]) 
+                    Q_rets[:, i] = traj_rewards[:, i] + self.gamma * (th.clamp(traj_rhos[:, i+1], max=1) * (Q_rets[:, i+1] - traj_target_Q_values[:, i+1]) + traj_values[:, i+1]) 
                     advantages[:, i] = Q_rets[:, i] - traj_values[:, i]
                 Q_rets = Q_rets * masks
 
@@ -666,30 +702,56 @@ class OffPAC(OffPolicyAlgorithm):
                 with th.no_grad():
                     traj_action_probs = th.exp(traj_log_probs)
                     alpha = 1.0 / traj_action_probs 
-                    alpha = th.clamp(alpha, max=5)
+                    alpha = th.clamp(alpha, max=self.max_alpha)
+                    # print(self.max_alpha)
+                    print("max alpha: {}".format(th.max(alpha)))
                     # _j = th.arange(latent.size(0)).long()
                     # print("adv: ", advantages)
+                    # th.set_printoptions(precision=6)
                     addition = (th.sign(advantages) * alpha * (1-traj_action_probs)).unsqueeze(-1)
                     # addition = th.ones_like(th.sign(advantages) * alpha * (1-traj_action_probs)).unsqueeze(-1)
                     # print(addition)
                     assert addition.size()  == traj_latents.gather(2, traj_actions.long()).size()
                     # latent_correspond = traj_latents.gather(2, traj_actions.long())
-                    # print(addition.size())
+                    # print("addition: ", addition)
                     # print(traj_latents.size())
                     # print(traj_latents.sum())
                     # print("actions: ", traj_actions)
                     # print(traj_latents.size)
-                    traj_latents = traj_latents + th.zeros_like(traj_latents).scatter_(2, traj_actions.long(), addition)
                     # print(traj_latents)
+                    # tmp = traj_latents
+                    # traj_latents = traj_latents.clamp(min=-20, max=20).detach()
+
+                    traj_latents = traj_latents + th.zeros_like(traj_latents).scatter_(2, traj_actions.long(), addition)
+                    # print(traj_latents - tmp)
                     # print(traj_latents.sum())
+                    print("latents abs mean before clamp: {}, max: {}, min: {}".format(th.mean(th.abs(traj_latents.detach())), th.max(traj_latents.detach()), th.min(traj_latents.detach())))
+
                     traj_latents = traj_latents.clamp(min=-50, max=50).detach()
+                    # _latents_max = traj_latents.max(dim=2)[0]
+                    # traj_latents /= _latents_max.view(*_latents_max.size(), 1)
+
+                    # traj_latents = traj_latents.clamp(min=-20, max=20).detach()
+                    # traj_latents = traj_latents.clamp(min=-50, max=50).detach()
+                    
+                    print("latents abs mean after clamp: {}, max: {}, min: {}".format(th.mean(th.abs(traj_latents.detach())), th.max(traj_latents.detach()), th.min(traj_latents.detach())))
                     
 
 
                 old_distribution = Categorical(probs=F.softmax(traj_old_latents.view(-1, self.action_space.n), dim=1))
                     
                 new_distribution = Categorical(probs=F.softmax(traj_latents.view(-1, self.action_space.n).detach(), dim=1))
-                policy_loss = th.distributions.kl_divergence(old_distribution, new_distribution).mean()
+
+                reg_loss = self.reg_coef * th.norm(traj_old_latents.view(-1, self.action_space.n), dim=1, p=2).mean()
+
+                policy_loss = th.distributions.kl_divergence(old_distribution, new_distribution).mean() + reg_loss + self.ent_coef * old_distribution.entropy().mean()
+                
+                # print(reg_loss.requires_grad)
+                # print(policy_loss.requires_grad)
+                print("Old distiribution max prob: ", th.max(old_distribution.probs))
+                print("New distiribution max prob: ", th.max(new_distribution.probs))
+                print("regularization loss: ", reg_loss) 
+                print("KL loss: ", policy_loss - reg_loss)
 
 
                 # policy_loss = 0.0
@@ -838,6 +900,10 @@ class OffPAC(OffPolicyAlgorithm):
             loss = policy_loss + self.vf_coef * value_loss
             # print(th.sum(th.isinf(loss)))
             if th.sum(th.isinf(loss)) > 0:
+                print("min alpha: ", th.min(alpha))
+                print("max alpha: ", th.max(alpha))
+                print("min latent: ", th.min(traj_latents))
+                print("max latent: ", th.max(traj_latents))
                 print("INF detected in loss")
                 print("policy_loss: ", policy_loss)
                 print("vf_coef * value_loss: ", self.vf_coef * value_loss)
@@ -851,7 +917,7 @@ class OffPAC(OffPolicyAlgorithm):
             self.policy.optimizer.zero_grad()
             loss.backward()
             self.n_backward += 1
-            self._on_step()
+            
             # print(loss)
             # print(self.policy.action_net)
             # print(self.policy.action_net.weight.grad)
@@ -865,8 +931,9 @@ class OffPAC(OffPolicyAlgorithm):
             '''
             /////
             '''
-
         self._n_updates += 1
+        self._on_update()
+        
 
         logger.record("train/value_loss", np.mean(value_losses))
         logger.record("train/policy_loss", np.mean(policy_losses))

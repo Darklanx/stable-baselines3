@@ -99,6 +99,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         sde_support: bool = True,
         remove_time_limit_termination: bool = False,
         supported_action_spaces: Optional[Tuple[gym.spaces.Space, ...]] = None,
+        share:bool = True
     ):
 
         super(OffPolicyAlgorithm, self).__init__(
@@ -118,6 +119,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
             sde_sample_freq=sde_sample_freq,
             supported_action_spaces=supported_action_spaces,
         )
+        self.share = share
         self.buffer_size = buffer_size
         self.batch_size = batch_size
         self.learning_starts = learning_starts
@@ -185,6 +187,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
             self.action_space,
             self.lr_schedule,
             **self.policy_kwargs,  # pytype:disable=not-instantiable
+            share = self.share
         )
         self.policy = self.policy.to(self.device)
 

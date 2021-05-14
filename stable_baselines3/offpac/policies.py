@@ -89,9 +89,10 @@ class OffPACPolicy(BasePolicy):
         features_extractor_kwargs: Optional[Dict[str, Any]] = None,
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
-        optimizer_kwargs: Optional[Dict[str, Any]] = None
+        optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        share: bool = True
     ):
-
+        self.share = share
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
             # Small values to avoid NaN in Adam optimizer
@@ -187,9 +188,24 @@ class OffPACPolicy(BasePolicy):
         # Note: If net_arch is None and some features extractor is used,
         #       net_arch here is an empty list and mlp_extractor does not
         #       really contain any layers (acts like an identity module).
-        self.mlp_extractor = MlpExtractor(
-            self.features_dim, net_arch=self.net_arch, activation_fn=self.activation_fn, device=self.device
-        )
+        if self.share:
+            self.v_mlp_extractor = MlpExtractor(
+                self.features_dim, net_arch=self.net_arch, activation_fn=self.activation_fn, device=self.device
+            )
+            self.v_mlp_extractor_target = self.v_mlp_extractor
+            self.a_mlp_extractor = self.v_mlp_extractor
+            self.a_mlp_extractor_target = self.v_mlp_extractor
+        else:
+            self.v_mlp_extractor = MlpExtractor(
+                self.features_dim, net_arch=self.net_arch, activation_fn=self.activation_fn, device=self.device
+            )
+            self.v_mlp_extractor_target = copy.deepcopy(self.v_mlp_extractor)
+            self.a_mlp_extractor = MlpExtractor(
+                self.features_dim, net_arch=self.net_arch, activation_fn=self.activation_fn, device=self.device
+            )
+            self.a_mlp_extractor_target = copy.deepcopy(self.a_mlp_extractor)
+
+
 
     def _build(self, lr_schedule: Schedule) -> None:
         """
@@ -200,7 +216,7 @@ class OffPACPolicy(BasePolicy):
         """
         self._build_mlp_extractor()
 
-        latent_dim_pi = self.mlp_extractor.latent_dim_pi
+        latent_dim_pi = self.a_mlp_extractor.latent_dim_pi
 
         # Separate features extractor for gSDE
         if self.sde_net_arch is not None:
@@ -228,8 +244,8 @@ class OffPACPolicy(BasePolicy):
         else:
             raise NotImplementedError(f"Unsupported distribution '{self.action_dist}'.")
 
-        self.q_net = nn.Linear(self.mlp_extractor.latent_dim_vf, self.action_space.n)
-        self.q_net_target = nn.Linear(self.mlp_extractor.latent_dim_vf, self.action_space.n)
+        self.q_net = nn.Linear(self.v_mlp_extractor.latent_dim_vf, self.action_space.n)
+        self.q_net_target = nn.Linear(self.v_mlp_extractor.latent_dim_vf, self.action_space.n)
         self.q_net_target.load_state_dict(self.q_net.state_dict())
         # self.behav_net = nn.Linear(self.mlp_extractor.latent_dim_vf, self.action_space.n)
         self.behav_net = copy.deepcopy(self.action_net)
@@ -244,7 +260,7 @@ class OffPACPolicy(BasePolicy):
             # originally from openai/baselines (default gains/init_scales).
             module_gains = {
                 self.features_extractor: np.sqrt(2),
-                self.mlp_extractor: np.sqrt(2),
+                self.v_mlp_extractor: np.sqrt(2),
                 self.action_net: 0.01,
                 self.q_net: 1,
             }
@@ -262,15 +278,16 @@ class OffPACPolicy(BasePolicy):
         :param deterministic: Whether to sample or use deterministic actions
         :return: action, value and log probability of the action
         """
-        latent_pi, latent_vf, latent_sde = self._get_latent(obs)
-        # Evaluate the values for the given observations
-        values = self.q_net(latent_vf)
-        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde=latent_sde)
-        actions = distribution.get_actions(deterministic=deterministic)
-        log_prob = distribution.log_prob(actions)
-        return actions, values, log_prob
+        pass
+        # latent_pi, latent_vf, latent_sde = self._get_latent(obs)
+        # # Evaluate the values for the given observations
+        # values = self.q_net(latent_vf)
+        # distribution = self._get_action_dist_from_latent(latent_pi, latent_sde=latent_sde)
+        # actions = distribution.get_actions(deterministic=deterministic)
+        # log_prob = distribution.log_prob(actions)
+        # return actions, values, log_prob
 
-    def _get_latent(self, obs: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    def _get_latent(self, obs: th.Tensor, use_target_v: bool = False, use_behav:bool = False) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """
         Get the latent code (i.e., activations of the last layer of each network)
         for the different networks.
@@ -281,7 +298,19 @@ class OffPACPolicy(BasePolicy):
         """
         # Preprocess the observation if needed
         features = self.extract_features(obs)
-        latent_pi, latent_vf = self.mlp_extractor(features)
+        if self.share:
+            latent_pi, latent_vf = self.a_mlp_extractor(features)
+        else:
+            if use_target_v:
+                _, latent_vf = self.v_mlp_extractor_target(features)
+            else:
+                _, latent_vf = self.v_mlp_extractor(features)
+            
+            if use_behav:
+                latent_pi, _ = self.a_mlp_extractor_target(features)
+            else:
+                latent_pi, _ = self.a_mlp_extractor(features)
+                
 
         # Features for sde
         latent_sde = latent_pi
@@ -289,7 +318,7 @@ class OffPACPolicy(BasePolicy):
             latent_sde = self.sde_features_extractor(features)
         return latent_pi, latent_vf, latent_sde
 
-    def _get_action_dist_from_latent(self, latent_pi: th.Tensor, latent_sde: Optional[th.Tensor] = None, action_net=None) -> Distribution:
+    def _get_action_dist_from_latent(self, latent_pi: th.Tensor, latent_sde: Optional[th.Tensor] = None, use_behav: bool = False) -> Distribution:
         """
         Retrieve action distribution given the latent codes.
 
@@ -297,7 +326,9 @@ class OffPACPolicy(BasePolicy):
         :param latent_sde: Latent code for the gSDE exploration function
         :return: Action distribution
         """
-        if action_net is None:
+        if use_behav:
+            action_net = self.behav_net
+        else:
             action_net = self.action_net
 
         mean_actions = action_net(latent_pi)
@@ -320,7 +351,7 @@ class OffPACPolicy(BasePolicy):
         else:
             raise ValueError("Invalid action distribution")
 
-    def _predict(self, observation: th.Tensor, deterministic: bool = False, action_net=None) -> th.Tensor:
+    def _predict(self, observation: th.Tensor, deterministic: bool = False, use_behav: bool = False) -> th.Tensor:
         """
         Get the action according to the policy for a given observation.
 
@@ -328,13 +359,16 @@ class OffPACPolicy(BasePolicy):
         :param deterministic: Whether to use stochastic or deterministic actions
         :return: Taken action according to the policy
         """
-        if action_net is None:
+        if use_behav:
+            action_net = self.behav_net
+        else:
             action_net = self.action_net
-        latent_pi, _, latent_sde = self._get_latent(observation)
-        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde, action_net)
+
+        latent_pi, _, latent_sde = self._get_latent(observation, use_behav=use_behav)
+        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde, use_behav)
         return distribution.get_actions(deterministic=deterministic)
 
-    def evaluate_actions(self, obs: th.Tensor, actions: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    def evaluate_actions(self, obs: th.Tensor, actions: th.Tensor, use_target_v: bool = True, use_behav: bool = False) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """
         Evaluate actions according to the current policy,
         given the observations.
@@ -344,8 +378,9 @@ class OffPACPolicy(BasePolicy):
         :return: estimated value, log likelihood of taking those actions
             and entropy of the action distribution.
         """
-        latent_pi, latent_vf, latent_sde = self._get_latent(obs)
-        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
+        # latent_pi, latent_vf, latent_sde = self._get_latent(obs, use_target)
+        latent_pi, latent_vf, latent_sde = self._get_latent(obs, use_target_v=use_target_v, use_behav=use_behav)
+        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde, use_behav)
         # print(th.exp(distribution.log_prob(actions.squeeze())))
         # for i in range(obs.size(0)):
             # latent_pi, latent_vf, latent_sde = self._get_latent(obs[i])
@@ -356,20 +391,20 @@ class OffPACPolicy(BasePolicy):
 
         log_prob = distribution.log_prob(actions.squeeze())
         
-        Q_values = th.gather(self.q_net(latent_vf), dim=1, index=actions.detach().long())
+        q_net = self.q_net_target if use_target_v else self.q_net
+        Q_values = th.gather(q_net(latent_vf), dim=1, index=actions.detach().long())
         # print(self.q_net(latent_vf))
         # print(actions)
         # print(Q_values)
         # exit()
         return Q_values, log_prob, distribution.entropy()
 
-    def get_action_log_probs(self, obs, actions, action_net=None):
+    def get_action_log_probs(self, obs, actions, use_behav=False):
         assert obs.size(0) == actions.size(0)
-        if action_net is None:
-            action_net = self.action_net
-        latent_pi, latent_vf, latent_sde = self._get_latent(obs)
 
-        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde, action_net)
+        latent_pi, latent_vf, latent_sde = self._get_latent(obs, use_behav=use_behav)
+
+        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde, use_behav)
 
         log_probs_grid = distribution.log_prob(actions)
         # print("grid")
@@ -380,15 +415,16 @@ class OffPACPolicy(BasePolicy):
 
 
 
-    def compute_value(self, obs: th.Tensor, q_net: nn.Module):
+    def compute_value(self, obs: th.Tensor, use_target_v: bool = True, use_behav: bool = False):
         """
         Compute V(s)
 
         :return: V(s)
         """
-        latent_pi, latent_vf, latent_sde = self._get_latent(obs)
+        q_net = self.q_net_target if use_target_v else self.q_net
+        latent_pi, latent_vf, latent_sde = self._get_latent(obs, use_target_v)
 
-        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
+        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde, use_behav)
         Q = q_net(latent_vf)
         actions = th.tensor([[i] for i in range(self.action_space.n)]).to(self.device)
         log_prob = distribution.log_prob(actions)
@@ -402,13 +438,14 @@ class OffPACPolicy(BasePolicy):
             print("prob.size(): ", prob.size())
         return th.sum(Q * prob, axis=1)
 
-    def get_policy_latent(self, obs: th.Tensor):
+    def get_policy_latent(self, obs: th.Tensor, use_behav: bool = False):
         '''
         return theta used to compute Q(s,a) with softmax
         '''
-        latent_pi, latent_vf, latent_sde = self._get_latent(obs)
-        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde)
-        return self.action_net(latent_pi), distribution.distribution
+        latent_pi, latent_vf, latent_sde = self._get_latent(obs, use_behav)
+        distribution = self._get_action_dist_from_latent(latent_pi, latent_sde, use_behav)
+        action_net = self.behav_net if use_behav else self.action_net
+        return action_net(latent_pi), distribution.distribution
 
 
 
@@ -466,6 +503,7 @@ class OffPACCnnPolicy(OffPACPolicy):
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        share: bool = True
     ):
         super(OffPACCnnPolicy, self).__init__(
             observation_space,
@@ -485,6 +523,7 @@ class OffPACCnnPolicy(OffPACPolicy):
             normalize_images,
             optimizer_class,
             optimizer_kwargs,
+            share = share
         )
 
 
