@@ -392,6 +392,10 @@ class OffPAC(OffPolicyAlgorithm):
                             self.trajectories[traj_i] = Trajectory(self.device)
                             episode_rewards.append(episode_reward[traj_i])
                             episode_reward[traj_i] = 0.0
+                            
+                            
+
+                    
 
 
             elif train_freq.unit == TrainFrequencyUnit.EPISODE:
@@ -516,42 +520,45 @@ class OffPAC(OffPolicyAlgorithm):
             
             
             trajectories = self.replay_buffer.sample(batch_size, env=self._vec_normalize_env)
-            trajectories.extend(self.replay_buffer.get_last(self.n_envs))
-            # print(len(trajectories))
+            # trajectories = []
+            # trajectories.extend(self.replay_buffer.get_last(self.batch_size))
+
             # The following "all_{}" is for speed up by doing batched .to(device)
 
             all_states, all_actions, all_rewards, all_next_states, all_dones, lengths, all_probs = [], [], [], [],[], [], []
-            all_next_states2 = []
+            all_next_states = []
             # we merge all the trajectories together for batch ".to(device)", later we extract the trajectories by using "lengths:list"
             for i, traj in enumerate(trajectories):
+                
                 states, actions, rewards, next_states, dones, probs = traj.get_tensors(device='cpu')
                 lengths.append(actions.size(0))
                 all_states.append(states)
                 all_actions.append(actions)
                 all_rewards.append(rewards)
-                all_next_states.append(next_states)
-                all_next_states2.append(next_states[-1].unsqueeze(0))
+                all_next_states.append(next_states[-1].unsqueeze(0))
                 all_dones.append(dones)
                 all_probs.append(probs)
 
-            
             all_states = th.cat(all_states).to(self.device)
             all_actions = th.cat(all_actions).to(self.device)
             all_rewards = th.cat(all_rewards).to(self.device)
+            # all_next_states = th.cat(all_next_states).to(self.device)
             all_next_states = th.cat(all_next_states).to(self.device)
-            all_next_states2 = th.cat(all_next_states2).to(self.device)
             all_dones = th.cat(all_dones).to(self.device)
             all_probs = th.cat(all_probs).to(self.device)
             all_Q_values, all_log_cur_probs, _  = self.policy.evaluate_actions(all_states, all_actions, use_target_v=False, use_behav=False)
             with th.no_grad():
-                all_target_Q_values, _, _  = self.policy.evaluate_actions(all_states, all_actions, use_target_v=True, use_behav=True)
+                # all_target_Q_values, _, _  = self.policy.evaluate_actions(all_states, all_actions, use_target_v=True, use_behav=True)
+
+                all_target_Q_values, _, _  = self.policy.evaluate_actions(all_states, all_actions, use_target_v=True, use_behav=False)
         
 
-            all_next_values = self.policy.compute_value(all_states, use_target_v=True, use_behav=True)
-            all_next_values_last = self.policy.compute_value(all_next_states2, use_target_v=True, use_behav=True)
+            # all_values = self.policy.compute_value(all_states, use_target_v=True, use_behav=True)
+            all_values = self.policy.compute_value(all_states, use_target_v=True, use_behav=False)
+            # all_next_values_last = self.policy.compute_value(all_next_states, use_target_v=True, use_behav=True)
+            all_next_values_last = self.policy.compute_value(all_next_states, use_target_v=True, use_behav=False)
+            
             traj_index_start = 0
-
-
             traj_states, traj_actions, traj_rewards, traj_dones, traj_values = [], [], [], [], []
             traj_Q_values, traj_target_Q_values, traj_rhos, traj_log_probs = [], [], [], []
             traj_latents = []
@@ -574,14 +581,14 @@ class OffPAC(OffPolicyAlgorithm):
 
                 traj_length = lengths[traj_i]
                 traj_index_end = traj_index_start + traj_length
-                states, actions, rewards, next_states, dones = all_states[traj_index_start:traj_index_end], all_actions[traj_index_start:traj_index_end], all_rewards[traj_index_start:traj_index_end],  all_next_states[traj_index_start:traj_index_end], all_dones[traj_index_start:traj_index_end]
+                states, actions, rewards, dones = all_states[traj_index_start:traj_index_end], all_actions[traj_index_start:traj_index_end], all_rewards[traj_index_start:traj_index_end], all_dones[traj_index_start:traj_index_end]
                 Q_values = all_Q_values[traj_index_start:traj_index_end]
                 target_Q_values = all_target_Q_values[traj_index_start:traj_index_end]
                 probs = all_probs[traj_index_start:traj_index_end]
                 log_cur_probs = all_log_cur_probs[traj_index_start:traj_index_end]
-                
-                values = th.cat([all_next_values[traj_index_start:traj_index_end], all_next_values_last[traj_i].unsqueeze(0)])
+                values = th.cat([all_values[traj_index_start:traj_index_end], all_next_values_last[traj_i].unsqueeze(0)])
                 traj_index_start += traj_length
+                # print(traj_length)
                 
                 
                 '''
@@ -656,6 +663,7 @@ class OffPAC(OffPolicyAlgorithm):
             traj_target_Q_values, _ = self.padding_tensor(traj_target_Q_values, self.device, max_len)
             traj_rhos, _ = self.padding_tensor(traj_rhos, self.device, max_len)
             traj_log_probs, _ = self.padding_tensor(traj_log_probs, self.device, max_len)
+            _traj_latents = th.cat(traj_latents).to(self.device).flatten().reshape(-1, 2)
             traj_latents, _ = self.padding_tensor(traj_latents, self.device, max_len)
             # print(traj_latents.size())
             # print(traj_actions.size())
@@ -673,36 +681,102 @@ class OffPAC(OffPolicyAlgorithm):
             with th.no_grad():
                 dones = traj_dones[:, -1]
                 Q_rets[:, -1] = traj_rewards[:, -1] + self.gamma * (1-dones) * next_state_values
-                
                 advantages[:, -1] =  Q_rets[:, -1] - traj_values[:, -1]
                 for i in reversed(range(max_len-1)):
                     Q_rets[:, i] = traj_rewards[:, i] + self.gamma * (th.clamp(traj_rhos[:, i+1], max=1) * (Q_rets[:, i+1] - traj_target_Q_values[:, i+1]) + traj_values[:, i+1]) 
-                    advantages[:, i] = Q_rets[:, i] - traj_values[:, i]
+                    Q_rets = Q_rets * masks
+                    # advantages[:, i] = Q_rets[:, i] - traj_values[:, i]
+                    
+                    # print(advantages)
+                    
                 Q_rets = Q_rets * masks
+                # print(advantages)
+                advantages = Q_rets - traj_values
+                # print(advantages)
+            # print(traj_rewards[:, -2] )
+            # print(Q_rets[:, -2] - traj_values[:, -2])
             # print("2: ", ms[0] - get_ms(ms))
+            # value_loss = F.mse_loss(th.flatten(traj_Q_values), th.flatten(Q_rets), reduction='mean')
+            # print(advantages.size())
+            #----
+            '''
+            observations = th.tensor(self.rollout_buffer.observations).to(self.device).squeeze(1)
+            returns = th.tensor(self.rollout_buffer.returns).to(self.device)
+            actions = th.tensor(self.rollout_buffer.actions).to(self.device).long().flatten()
+            # print(observations.size())
+            # print(actions.size())
+            log_probs = self.policy.get_action_log_probs(observations, actions.unsqueeze(1))
+
+            # advantages = th.tensor(self.rollout_buffer.advantages).to(self.device)
+            advantages2 = th.tensor(self.rollout_buffer.advantages).to(self.device)
+            values = self.policy.compute_value(observations, use_behav=False, use_target_v=False)
+            '''
+            # ----
+                
+            '''
+            if len(traj_Q_values.flatten()) != len(traj_Q_values[th.abs(traj_Q_values) > 1e-5]):
+                print(traj_Q_values)
+                print(Q_rets)
+                exit()
+            '''
+            # if len(traj_values[0]) != len(traj_values[th.abs(traj_values) > 1e-5]):
+            #     print(log_probs)
+            #     print(advantages)
+            #     print(traj_values)
+            #     print(values)
+            #     exit()
+
+            # traj_values2 = traj_values[th.abs(traj_values.detach()) > 1e-8]
+            # value_loss = F.mse_loss(th.flatten(traj_values2), th.flatten(returns), reduction='mean')
 
             value_loss = F.mse_loss(th.flatten(traj_Q_values), th.flatten(Q_rets), reduction='mean')
-            # value_loss = F.smooth_l1_loss(th.flatten(traj_Q_values), th.flatten(Q_rets), reduction='mean')
 
-            # print("value_loss: ", F.mse_loss(th.flatten(traj_Q_values), th.flatten(Q_rets), reduction='sum'))
 
             if not self.KL:
                 policy_loss = -(traj_rhos.detach() * advantages.detach() * traj_log_probs * masks).mean()
+
+                # policy_loss = -(advantages2.flatten() * log_probs.flatten()).mean()
             else:
+                 
+                # if len(traj_log_probs.flatten()) != len(traj_log_probs[th.abs(traj_log_probs)>1e-10].flatten()):
+                        # print(new_advantages)
+                        # print(advantages2)
+
                 with th.no_grad():
+
                     traj_action_probs = th.exp(traj_log_probs)
-                    alpha = 1.0 / traj_action_probs / 2
+                    alpha = 1.0 / traj_action_probs / 10
                     alpha = th.clamp(alpha, max=self.max_alpha)
-                    # print(self.max_alpha)
+
                     if i_gradient_step == 0 and False:
                         print("max alpha: {}".format(th.max(alpha)))
 
+
+                    #---
+                    '''
+                    traj_index_start = 0
+                    new_advantages = th.zeros_like(advantages)
+                    for traj_i, traj in enumerate(trajectories):
+                        traj_length = lengths[traj_i]
+                        traj_index_end = traj_index_start + traj_length
+                        new_advantages[traj_i, -traj_length:] = advantages2.flatten()[traj_index_start:traj_index_end]
+                        traj_index_start += traj_length
+                    advantages = new_advantages
+                    # print(advantages)
+                    # print(advantages2)
+                    # exit()
+                    '''
+                    #---   
+
                     # th.set_printoptions(precision=6)
+
                     addition = (th.sign(advantages) * (alpha * (1-traj_action_probs) + 1)).unsqueeze(-1)
                     assert addition.size()  == traj_latents.gather(2, traj_actions.long()).size()
- 
+
+
+
                     traj_latents = traj_latents + th.zeros_like(traj_latents).scatter_(2, traj_actions.long(), addition)
-         
+
                     if th.max(traj_latents.detach()) > 50 or th.max(traj_latents.detach()) < -50:
                         print("latents abs mean before clamp: {}, max: {}, min: {}".format(th.mean(th.abs(traj_latents.detach())), th.max(traj_latents.detach()), th.min(traj_latents.detach())))
 
@@ -716,12 +790,14 @@ class OffPAC(OffPolicyAlgorithm):
 
                 reg_loss = self.reg_coef * th.norm(traj_old_latents.view(-1, self.action_space.n), dim=1, p=2).mean()
                 ent_loss = self.ent_coef * old_distribution.entropy().mean()
-                policy_loss = th.distributions.kl_divergence(old_distribution, new_distribution).mean() + reg_loss + ent_loss
-                
+                # policy_loss = th.distributions.kl_divergence(old_distribution, new_distribution).mean() + reg_loss + ent_loss
+                policy_loss = th.distributions.kl_divergence(old_distribution, new_distribution).sum() / num #+ reg_loss + ent_loss
                 # print(reg_loss.requires_grad)
                 # print(policy_loss.requires_grad)
-                if i_gradient_step == 0 and True:
-                    print("max traj_latents: ", th.max(traj_latents.flatten(),dim=-1))
+                if i_gradient_step == 0 and self._n_updates % 20 == 0:
+                    # print("max traj_latents: ", th.max(traj_latents.flatten(),dim=-1))
+                    print("max traj_latents: ", th.max(traj_latents.flatten()))
+                    print("min traj_latents: ", th.min(traj_latents.flatten()))
                     print("Old max prob: ", th.max(old_distribution.probs))
                     print("New max prob: ", th.max(new_distribution.probs))
                     print("Max difference: ", th.max(th.abs(new_distribution.probs - old_distribution.probs)))
@@ -729,17 +805,17 @@ class OffPAC(OffPolicyAlgorithm):
                     print("Ent loss: ", ent_loss) 
                     print("KL loss: ", policy_loss - reg_loss)
 
-
-                policy_loss = 0.0
-                for i in range(num):
+                # print(policy_loss)
+                # policy_loss = 0.0
+                # for i in range(num):
                     
-                    # print('t: ', traj_latents[i].size())
-                    old_distribution = Categorical(probs=F.softmax(traj_old_latents[i], dim=1))
+                #     # print('t: ', traj_latents[i].size())
+                #     old_distribution = Categorical(probs=F.softmax(traj_old_latents[i], dim=1))
                     
-                    new_distribution = Categorical(probs=F.softmax(traj_latents[i].detach(), dim=1))
-                    policy_loss += th.distributions.kl_divergence(old_distribution, new_distribution).sum()
+                #     new_distribution = Categorical(probs=F.softmax(traj_latents[i].detach(), dim=1))
+                #     policy_loss += th.distributions.kl_divergence(old_distribution, new_distribution).sum()
                 
-                policy_loss /= num
+                # policy_loss /= num
             
             # print("policy_loss: ", policy_loss)       
             '''
@@ -887,9 +963,10 @@ class OffPAC(OffPolicyAlgorithm):
                     latent_pi, latent_vf, latent_sde = self.policy._get_latent(rollout_data.observations)
                     values = self.value_net(latent_vf)
                 else:
-                    values = self.policy.compute_value(rollout_data.observations)
+                    values = self.policy.compute_value(rollout_data.observations, use_behav=False, use_target_v=False)
 
                 values = values.flatten()
+
                 log_probs = self.policy.get_action_log_probs(rollout_data.observations, actions.unsqueeze(1))
                 assert advantages.size() == log_probs.flatten().size()
                 on_policy_value_loss = F.mse_loss(rollout_data.returns, values)
@@ -901,8 +978,8 @@ class OffPAC(OffPolicyAlgorithm):
             # print(on_policy_value_loss.requires_grad)
             # loss = policy_loss + on_policy_policy_loss + self.vf_coef * (value_loss + on_policy_value_loss) / 2
             
-            loss = on_policy_policy_loss + self.vf_coef * (on_policy_value_loss)  # a2c
-            # loss = policy_loss + self.vf_coef * (value_loss) 
+            # loss = on_policy_policy_loss + self.vf_coef * (on_policy_value_loss)  # a2c
+            loss = policy_loss + self.vf_coef * (value_loss) 
             # loss = on_policy_policy_loss
             # print(th.sum(th.isinf(loss)))
             if th.sum(th.isinf(loss)) > 0:

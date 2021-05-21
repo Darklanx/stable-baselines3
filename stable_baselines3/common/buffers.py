@@ -100,7 +100,7 @@ class BaseBuffer(ABC):
         :return:
         """
         upper_bound = self.buffer_size if self.full else self.pos
-        if batch_size == self.buffer_size:
+        if batch_size == self.buffer_size or batch_size > self.pos:
             batch_inds = np.arange(0, upper_bound)
         else:
             batch_inds = np.random.randint(0, upper_bound, size=batch_size)
@@ -481,7 +481,10 @@ class TrajectoryBuffer(BaseBuffer):
             return [self.trajectories[ind] for ind in batch_inds]
 
     def get_last(self, n_traj):
-        return self.trajectories[-n_traj:]
+        if n_traj > self.pos:
+            return self.trajectories[:self.pos]
+        else:
+            return self.trajectories[-n_traj:]
 
 class Trajectory:
     def __init__(self, device):

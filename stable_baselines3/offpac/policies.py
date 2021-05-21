@@ -272,7 +272,7 @@ class OffPACPolicy(BasePolicy):
 
         self.q_net_target.load_state_dict(self.q_net.state_dict())
         self.behav_net = copy.deepcopy(self.action_net)
-        # self.behav_net =
+        # self.behav_net = None
         # self.behav_net = self.action_net
         '''
         for name, param in self.named_parameters():
@@ -440,15 +440,31 @@ class OffPACPolicy(BasePolicy):
 
         :return: V(s)
         """
+        '''
+        q_net = self.q_net_target if use_target_v else self.q_net
+        print(obs[0])
+        for i in range(obs.size(0)):
+            latent_pi, latent_vf, latent_sde = self._get_latent(obs[i].unsqueeze(0), use_target_v)
+            Q = q_net(latent_vf)
+            print(Q)
+            distribution = self._get_action_dist_from_latent(latent_pi, latent_sde, use_behav)
+            actions = th.tensor([[i] for i in range(self.action_space.n)]).to(self.device)
+            log_prob = distribution.log_prob(actions)
+            prob = th.exp(log_prob).permute(1, 0).detach()
+            print(prob)
+        '''
+
         q_net = self.q_net_target if use_target_v else self.q_net
         latent_pi, latent_vf, latent_sde = self._get_latent(obs, use_target_v)
 
         distribution = self._get_action_dist_from_latent(latent_pi, latent_sde, use_behav)
         
         Q = q_net(latent_vf)
+
         actions = th.tensor([[i] for i in range(self.action_space.n)]).to(self.device)
         log_prob = distribution.log_prob(actions)
         prob = th.exp(log_prob).permute(1, 0).detach()
+
 
         try:
             assert Q.size() == prob.size()
