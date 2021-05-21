@@ -179,7 +179,6 @@ class MlpExtractor(nn.Module):
                 last_layer_dim_shared = layer_size
 
             else:
-                print("not shared")
                 assert isinstance(layer, dict), "Error: the net_arch list can only contain ints and dicts"
                 if "pi" in layer:
                     assert isinstance(layer["pi"], list), "Error: net_arch[-1]['pi'] must contain a list of integers."

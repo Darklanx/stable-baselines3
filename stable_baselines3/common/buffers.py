@@ -380,6 +380,7 @@ class RolloutBuffer(BaseBuffer):
         if isinstance(self.observation_space, spaces.Discrete):
             obs = obs.reshape((self.n_envs,) + self.obs_shape)
 
+
         self.observations[self.pos] = np.array(obs).copy()
         self.actions[self.pos] = np.array(action).copy()
         self.rewards[self.pos] = np.array(reward).copy()
@@ -455,6 +456,7 @@ class TrajectoryBuffer(BaseBuffer):
             self.trajectories.append(trajectory)
         else:
             self.trajectories[self.pos] = trajectory
+        
         self.pos += 1
         if self.pos == self.buffer_size:
             self.pos = 0
@@ -477,6 +479,9 @@ class TrajectoryBuffer(BaseBuffer):
             return [self.trajectories[ind] for ind in batch_inds]
         else:
             return [self.trajectories[ind] for ind in batch_inds]
+
+    def get_last(self, n_traj):
+        return self.trajectories[-n_traj:]
 
 class Trajectory:
     def __init__(self, device):

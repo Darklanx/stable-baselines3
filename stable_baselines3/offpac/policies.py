@@ -140,7 +140,7 @@ class OffPACPolicy(BasePolicy):
         self.use_sde = use_sde
         self.dist_kwargs = dist_kwargs
         self.q_net, self.q_net_target, self.behav_net = None, None, None
-
+        self.value_net = None
         # Action distribution
         self.action_dist = make_proba_distribution(action_space, use_sde=use_sde, softmax=True, dist_kwargs=dist_kwargs)
 
@@ -246,9 +246,10 @@ class OffPACPolicy(BasePolicy):
 
         self.q_net = nn.Linear(self.v_mlp_extractor.latent_dim_vf, self.action_space.n)
         self.q_net_target = nn.Linear(self.v_mlp_extractor.latent_dim_vf, self.action_space.n)
-        self.q_net_target.load_state_dict(self.q_net.state_dict())
+        self.value_net = nn.Linear(self.v_mlp_extractor.latent_dim_vf, 1)
+
         # self.behav_net = nn.Linear(self.mlp_extractor.latent_dim_vf, self.action_space.n)
-        self.behav_net = copy.deepcopy(self.action_net)
+        
         # self.behav_net.load_state_dict(self.q_net_target.state_dict())
 
         # Init weights: use orthogonal initialization
@@ -263,12 +264,24 @@ class OffPACPolicy(BasePolicy):
                 self.v_mlp_extractor: np.sqrt(2),
                 self.action_net: 0.01,
                 self.q_net: 1,
+                self.value_net: 1
             }
+
             for module, gain in module_gains.items():
                 module.apply(partial(self.init_weights, gain=gain))
 
+        self.q_net_target.load_state_dict(self.q_net.state_dict())
+        self.behav_net = copy.deepcopy(self.action_net)
+        # self.behav_net =
+        # self.behav_net = self.action_net
+        '''
+        for name, param in self.named_parameters():
+            if param.requires_grad:
+                print (name, param.data[0])
+        '''
         # Setup optimizer with initial learning rate
         self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)
+
 
     def forward(self, obs: th.Tensor, deterministic: bool = False) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
         """
@@ -330,6 +343,7 @@ class OffPACPolicy(BasePolicy):
             action_net = self.behav_net
         else:
             action_net = self.action_net
+        action_net = self.action_net
 
         mean_actions = action_net(latent_pi)
 
@@ -406,16 +420,21 @@ class OffPACPolicy(BasePolicy):
 
         distribution = self._get_action_dist_from_latent(latent_pi, latent_sde, use_behav)
 
-        log_probs_grid = distribution.log_prob(actions)
+        log_probs_grid = distribution.log_prob(actions) # row 0 is (s0, a0), (s1, a0)...(sn, a0)
+
+        # print(distribution.log_prob(th.tensor([0]).to(self.device)))
+        # print(distribution.log_prob(th.tensor([1]).to(self.device)))
         # print("grid")
         # print(log_probs_grid.size())
+        
         assert log_probs_grid.size() == (obs.size(0), actions.size(0))
         log_probs = th.gather(log_probs_grid, dim=1, index=th.tensor([[i] for i in range(actions.size(0))]).to(self.device))
+
         return log_probs
 
 
 
-    def compute_value(self, obs: th.Tensor, use_target_v: bool = True, use_behav: bool = False):
+    def compute_value(self, obs: th.Tensor, use_target_v: bool, use_behav: bool = False):
         """
         Compute V(s)
 
@@ -425,10 +444,10 @@ class OffPACPolicy(BasePolicy):
         latent_pi, latent_vf, latent_sde = self._get_latent(obs, use_target_v)
 
         distribution = self._get_action_dist_from_latent(latent_pi, latent_sde, use_behav)
+        
         Q = q_net(latent_vf)
         actions = th.tensor([[i] for i in range(self.action_space.n)]).to(self.device)
         log_prob = distribution.log_prob(actions)
-        
         prob = th.exp(log_prob).permute(1, 0).detach()
 
         try:

@@ -159,11 +159,17 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                 actions, values, log_probs = self.policy.forward(obs_tensor)
             actions = actions.cpu().numpy()
 
+
             # Rescale and perform action
             clipped_actions = actions
             # Clip the actions to avoid out of bound error
             if isinstance(self.action_space, gym.spaces.Box):
+                # print(actions)
                 clipped_actions = np.clip(actions, self.action_space.low, self.action_space.high)
+                # print(clipped_actions)
+                if actions != clipped_actions:
+                    print("clipped!")
+                    exit(-1)
 
             new_obs, rewards, dones, infos = env.step(clipped_actions)
             
@@ -181,6 +187,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             if isinstance(self.action_space, gym.spaces.Discrete):
                 # Reshape in case of discrete action
                 actions = actions.reshape(-1, 1)
+
             rollout_buffer.add(self._last_obs, actions, rewards, self._last_episode_starts, values, log_probs)
             self._last_obs = new_obs
             self._last_episode_starts = dones
@@ -228,7 +235,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
             get_ms(ms)
 
             continue_training = self.collect_rollouts(self.env, callback, self.rollout_buffer, n_rollout_steps=self.n_steps)
-            print("collect_time: ", ms[0] - get_ms(ms))
+            # print("collect_time: ", ms[0] - get_ms(ms))
             if continue_training is False:
                 break
 
@@ -248,7 +255,7 @@ class OnPolicyAlgorithm(BaseAlgorithm):
                 logger.dump(step=self.num_timesteps)
 
             self.train()
-            print("training time: ", ms[0] - get_ms(ms))
+            # print("training time: ", ms[0] - get_ms(ms))
             # exit()
 
         callback.on_training_end()

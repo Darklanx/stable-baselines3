@@ -298,7 +298,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
                 break
             
             if self.num_timesteps > 0 and self.num_timesteps > self.learning_starts:
-                ms = get_ms()
+                # ms = get_ms()
                 # If no `gradient_steps` is specified,
                 # do as many gradients steps as steps performed during the rollout
                 gradient_steps = self.gradient_steps if self.gradient_steps > 0 else rollout.episode_timesteps

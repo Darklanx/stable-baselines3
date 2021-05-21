@@ -134,6 +134,8 @@ class A2C(OnPolicyAlgorithm):
             # TODO: avoid second computation of everything because of the gradient
             values, log_prob, entropy = self.policy.evaluate_actions(rollout_data.observations, actions)
             values = values.flatten()
+            # print(values)
+            # print(rollout_data.old_values)
 
             # Normalize advantage (not present in the original implementation)
             advantages = rollout_data.advantages
@@ -142,7 +144,6 @@ class A2C(OnPolicyAlgorithm):
 
             # Policy gradient loss
             policy_loss = -(advantages * log_prob).mean()
-
             # Value loss using the TD(gae_lambda) target
             value_loss = F.mse_loss(rollout_data.returns, values)
 
@@ -154,7 +155,6 @@ class A2C(OnPolicyAlgorithm):
                 entropy_loss = -th.mean(entropy)
 
             loss = policy_loss + self.ent_coef * entropy_loss + self.vf_coef * value_loss
-
             # Optimization step
             self.policy.optimizer.zero_grad()
             loss.backward()
