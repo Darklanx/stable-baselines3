@@ -10,9 +10,20 @@ from torch import nn
 from torch.distributions import Bernoulli, Categorical, Normal 
 from torch.distributions.kl import register_kl
 import torch.nn.functional as F
-
+from scipy.stats import wasserstein_distance
 from stable_baselines3.common.preprocessing import get_action_dim
 
+def EMD(dist_a, dist_b):
+    cdf_a = th.cumsum(dist_a.probs, 1)
+    cdf_b = th.cumsum(dist_b.probs, 1)
+    # print(cdf_a.size())
+    # print(dist_a.probs[0])
+    # print(dist_b.probs[0])
+    # print(th.abs(cdf_a[0] - cdf_b[0]))
+    # print(th.sum(th.abs(cdf_a[0] - cdf_b[0])) / 2)
+    # print(wasserstein_distance(dist_a.probs[0].detach().numpy(), dist_b.probs[0].detach().numpy()))
+    # exit()
+    return th.sum(th.abs(cdf_a - cdf_b)) / cdf_a.size(1)
 
 class Distribution(ABC):
     """Abstract base class for distributions."""
@@ -270,7 +281,12 @@ class SoftmaxCategorical(Distribution):
             of the policy network (before the action layer)
         :return:
         """
-        action_logits = nn.Linear(latent_dim, self.action_dim)
+        # action_logits = nn.Linear(latent_dim, self.action_dim)
+        action_logits = nn.Sequential(
+               nn.Linear(latent_dim, latent_dim*2),
+               nn.ReLU(),
+               nn.Linear(latent_dim*2, self.action_dim),
+        )
         return action_logits
     
 

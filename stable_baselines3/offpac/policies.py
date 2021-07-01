@@ -279,6 +279,7 @@ class OffPACPolicy(BasePolicy):
             if param.requires_grad:
                 print (name, param.data[0])
         '''
+
         # Setup optimizer with initial learning rate
         self.optimizer = self.optimizer_class(self.parameters(), lr=lr_schedule(1), **self.optimizer_kwargs)
 

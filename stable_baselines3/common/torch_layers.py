@@ -170,6 +170,8 @@ class MlpExtractor(nn.Module):
         last_layer_dim_shared = feature_dim
 
         # Iterate through the shared layers and build the shared parts of the network
+        # print(net_arch)
+        # exit()
         for layer in net_arch:
             if isinstance(layer, int):  # Check that this is a shared layer
                 layer_size = layer
