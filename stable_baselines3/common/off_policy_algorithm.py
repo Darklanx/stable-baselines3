@@ -219,7 +219,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         eval_env: Optional[GymEnv],
         callback: MaybeCallback = None,
         eval_freq: int = 10000,
-        n_eval_episodes: int = 5,
+        n_eval_episodes: int = 100,
         log_path: Optional[str] = None,
         reset_num_timesteps: bool = True,
         tb_log_name: str = "run",
@@ -259,7 +259,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
         log_interval: int = 4,
         eval_env: Optional[GymEnv] = None,
         eval_freq: int = -1,
-        n_eval_episodes: int = 5,
+        n_eval_episodes: int = 100,
         tb_log_name: str = "run",
         eval_log_path: Optional[str] = None,
         reset_num_timesteps: bool = True,
@@ -510,7 +510,7 @@ class OffPolicyAlgorithm(BaseAlgorithm):
                 self._update_info_buffer(infos, done)
 
                 # Store data in replay buffer (normalized action and unnormalized observation)
-                self._store_transition(replay_buffer, buffer_action, new_obs, reward, done, infos)
+                self._store_transition(buffer, buffer_action, new_obs, reward, done, infos)
 
                 self._update_current_progress_remaining(self.num_timesteps, self._total_timesteps)
 

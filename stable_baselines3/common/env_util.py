@@ -6,6 +6,7 @@ import gym
 from stable_baselines3.common.atari_wrappers import AtariWrapper
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecEnv
+from stable_baselines3.common.min_atar import make_min_atar_env
 
 
 def unwrap_wrapper(env: gym.Env, wrapper_class: Type[gym.Wrapper]) -> Optional[gym.Wrapper]:
@@ -46,6 +47,7 @@ def make_vec_env(
     vec_env_cls: Optional[Type[Union[DummyVecEnv, SubprocVecEnv]]] = None,
     vec_env_kwargs: Optional[Dict[str, Any]] = None,
     monitor_kwargs: Optional[Dict[str, Any]] = None,
+    use_min_atar = False
 ) -> VecEnv:
     """
     Create a wrapped, monitored ``VecEnv``.
@@ -73,10 +75,13 @@ def make_vec_env(
 
     def make_env(rank):
         def _init():
-            if isinstance(env_id, str):
-                env = gym.make(env_id, **env_kwargs)
+            if use_min_atar:
+                env = make_min_atar_env(env_id, seed + rank)
             else:
-                env = env_id(**env_kwargs)
+                if isinstance(env_id, str):
+                    env = gym.make(env_id, **env_kwargs)
+                else:
+                    env = env_id(**env_kwargs)
             if seed is not None:
                 env.seed(seed + rank)
                 env.action_space.seed(seed + rank)

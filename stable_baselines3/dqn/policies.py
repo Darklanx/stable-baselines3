@@ -221,6 +221,7 @@ class CnnPolicy(DQNPolicy):
         normalize_images: bool = True,
         optimizer_class: Type[th.optim.Optimizer] = th.optim.Adam,
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        share = None
     ):
         super(CnnPolicy, self).__init__(
             observation_space,

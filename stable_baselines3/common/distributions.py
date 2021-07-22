@@ -281,12 +281,12 @@ class SoftmaxCategorical(Distribution):
             of the policy network (before the action layer)
         :return:
         """
-        # action_logits = nn.Linear(latent_dim, self.action_dim)
-        action_logits = nn.Sequential(
-               nn.Linear(latent_dim, latent_dim*2),
-               nn.ReLU(),
-               nn.Linear(latent_dim*2, self.action_dim),
-        )
+        action_logits = nn.Linear(latent_dim, self.action_dim)
+        # action_logits = nn.Sequential(
+        #        nn.Linear(latent_dim, latent_dim*2),
+        #        nn.ReLU(),
+        #        nn.Linear(latent_dim*2, self.action_dim),
+        # )
         return action_logits
     
 
