@@ -90,7 +90,10 @@ class OffPAC(OffPolicyAlgorithm):
         use_rms_prop: bool = True,
         rms_prop_eps: float = 1e-5,
         use_v_net: bool=False,
-        EM: bool=False
+        EM: bool=False,
+        use_mse: bool=False,
+        save_path: str=None
+
     ):
 
         super(OffPAC, self).__init__(
@@ -118,10 +121,14 @@ class OffPAC(OffPolicyAlgorithm):
             support_multi_env=support_multi_env,
             share=share
         )
-        self.log_sign_dif_file = os.path.join(os.getcwd(), 'sign.txt')
-        with open(self.log_sign_dif_file, 'w') as f:
-            pass
 
+
+        assert save_path != None
+        self.save_path = save_path
+
+        self.log_sign_dif_file = open(os.path.join(self.save_path, 'sign.txt'), 'a+', buffering=1)
+
+        self.use_mse = use_mse
         self.use_v_net = use_v_net
         self.behav_tau = behav_tau
         self.reg_coef = reg_coef
@@ -171,6 +178,12 @@ class OffPAC(OffPolicyAlgorithm):
         )
         
 
+    def __getstate__(self):
+        state = self.__dict__.copy()
+        # Don't pickle log_sign_dif_file
+        del state["log_sign_dif_file"]
+        return state
+            
     def _setup_model(self) -> None:
         super(OffPAC, self)._setup_model()
         self._create_aliases()
@@ -348,10 +361,10 @@ class OffPAC(OffPolicyAlgorithm):
 
             with th.no_grad():
                 if self.use_v_net:
-                    latent_pi, latent_vf, latent_sde = self.policy._get_latent(th.tensor(self._last_obs))
+                    latent_pi, latent_vf, latent_sde = self.policy._get_latent(th.tensor(self._last_obs).to(self.device))
                     values = self.value_net(latent_vf).detach()
                 else:
-                    values = self.policy.compute_value(th.tensor(self._last_obs), use_target_v=False).detach()
+                    values = self.policy.compute_value(th.tensor(self._last_obs).to(self.device), use_target_v=False).detach()
                 
             # self.rollout_buffer.add(self._last_obs, action.reshape(-1, 1), reward, self._last_episode_starts, values, log_probs.flatten())
 
@@ -579,7 +592,7 @@ class OffPAC(OffPolicyAlgorithm):
         # print(self.replay_buffer.size())
         # print(self.replay_buffer.size() //batch_size)
         # print("steps:" ,gradient_steps)
-        signs = []
+        
         ms=[0]
         get_ms(ms)
         
@@ -804,10 +817,10 @@ class OffPAC(OffPolicyAlgorithm):
             # traj_values2 = traj_values[th.abs(traj_values.detach()) > 1e-8]
             # value_loss = F.mse_loss(th.flatten(traj_values2), th.flatten(returns), reduction='mean')
             if self.train_mode != 'policy': # if not policy only 
-                value_loss = F.mse_loss(th.flatten(traj_Q_values), th.flatten(Q_rets), reduction='mean')
+                value_loss = F.mse_loss(th.flatten(traj_Q_values), th.flatten(Q_rets), reduction='mean').to(self.device)
                 self.vloss_tracker.add(value_loss.item())
             else:
-                value_loss = th.tensor([0.0])
+                value_loss = th.tensor([0.0]).to(self.device)
 
             if self.train_mode != 'value': # if not value only 
                 if not self.KL:
@@ -847,9 +860,7 @@ class OffPAC(OffPolicyAlgorithm):
                         # addition = (th.sign(advantages) * (alpha * (1-traj_action_probs))).unsqueeze(-1)
                         addition = (th.sign(advantages) * (alpha * (1-traj_action_probs) + 0.1)).unsqueeze(-1)
                         
-                        # TODO
-                        # subtract from all theta by addtion/n
-                        
+
 
                         
                         # addition[addition < 0] = 0
@@ -865,6 +876,11 @@ class OffPAC(OffPolicyAlgorithm):
 
                         traj_latents = traj_latents + th.zeros_like(traj_latents).scatter_(2, traj_actions.long(), addition)
 
+                        # TODO
+                        # subtract from all theta by addtion/n
+                        
+                        traj_latents -= addition / self.action_space.n
+
                         # traj_latents = traj_latents.view(-1, 1)
                         # traj_latents -= th.mean(traj_latents, axis=1).view(-1, 1)
                         
@@ -879,32 +895,34 @@ class OffPAC(OffPolicyAlgorithm):
                     old_distribution = Categorical(probs=F.softmax(traj_old_latents.view(-1, self.action_space.n)[update_mask], dim=1))
                         
                     new_distribution = Categorical(probs=F.softmax(traj_latents.view(-1, self.action_space.n).detach()[update_mask], dim=1))
-                    
                     reg_loss = self.reg_coef * th.norm(traj_old_latents.view(-1, self.action_space.n), dim=1, p=2).mean()
                     ent_loss = self.ent_coef * old_distribution.entropy().mean()
                     
                     if self.EM:
-                        KL_loss = EMD(old_distribution, new_distribution)
+                        KL_loss = EMD(old_distribution, new_distribution).to(self.device)
                     else:
                         # KL_loss = (0.5 * th.distributions.kl_divergence(old_distribution, new_distribution).sum() + 0.5 * th.distributions.kl_divergence( new_distribution, old_distribution).sum()) / num
-                        # KL_loss = th.distributions.kl_divergence(old_distribution, new_distribution).mean()
-                        KL_loss = th.nn.MSELoss()(traj_old_latents.view(-1, self.action_space.n), traj_latents.view(-1, self.action_space.n))
+                        if not self.use_mse:
+                            KL_loss = th.distributions.kl_divergence(old_distribution, new_distribution).mean().to(self.device)
+                        else:
+                            KL_loss = th.nn.MSELoss()(traj_old_latents.view(-1, self.action_space.n)[update_mask], traj_latents.view(-1, self.action_space.n)[update_mask])
+
                     # KL_loss = th.nn.MSELoss()(old_distribution.probs, new_distribution.probs)
                     policy_loss = KL_loss + reg_loss
-                    max_diff_statewise = th.max(th.abs(new_distribution.probs - old_distribution.probs), dim=1)[0]
-                    max_diff, max_diff_idx = th.max(max_diff_statewise, dim=0)
-                    if i_gradient_step == 0 and self._n_updates % 20 == 0:
+                    # max_diff_statewise = th.max(th.abs(new_distribution.probs - old_distribution.probs), dim=1)[0]
+                    # max_diff, max_diff_idx = th.max(max_diff_statewise, dim=0)
+                    if i_gradient_step == 0 and self._n_updates % 8 == 0:
                         # print("max traj_latents: ", th.max(traj_latents.flatten(), dim=-1))
-                        print("max traj_latents: ", th.max(traj_latents.flatten()))
-                        print("min traj_latents: ", th.min(traj_latents.flatten()))
-                        print("Old max prob: ", th.max(old_distribution.probs))
-                        print("New max prob: ", th.max(new_distribution.probs))
+                        # print("max traj_latents: ", th.max(traj_latents.flatten()))
+                        # print("min traj_latents: ", th.min(traj_latents.flatten()))
+                        # print("Old max prob: ", th.max(old_distribution.probs))
+                        # print("New max prob: ", th.max(new_distribution.probs))
                         
-                        print("Max difference: ", max_diff)
-                        print("Old: ", old_distribution.probs[max_diff_idx])
-                        print(traj_old_latents.view(-1, self.action_space.n)[max_diff_idx])
-                        print(traj_latents.view(-1, self.action_space.n)[max_diff_idx])
-                        print("New: ", new_distribution.probs[max_diff_idx])
+                        # print("Max difference: ", max_diff)
+                        # print("Old: ", old_distribution.probs[max_diff_idx])
+                        print(traj_old_latents.view(-1, self.action_space.n)[update_mask][0:5])
+                        print(traj_latents.view(-1, self.action_space.n)[update_mask][0:5])
+                        # print("New: ", new_distribution.probs[max_diff_idx])
                         print("regularization loss: ", reg_loss) 
                         print("Ent loss: ", ent_loss) 
                         if self.EM:
@@ -914,7 +932,7 @@ class OffPAC(OffPolicyAlgorithm):
 
 
             else:
-                policy_loss = th.tensor([0.0])
+                policy_loss = th.tensor([0.0]).to(self.device)
             
 
             value_losses.append((self.vf_coef * value_loss).item())
@@ -984,39 +1002,46 @@ class OffPAC(OffPolicyAlgorithm):
             th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
 
             self.policy.optimizer.step()
-            '''
-            with th.no_grad():
-                if self.train_mode != 'value' and is_last_step and (self.KL):
-                    latent, _ = self.policy.get_policy_latent(traj_states.view(-1, traj_states.size(-1)), use_behav=False)
-                    backward_distribution = Categorical(probs=F.softmax(latent.view(-1, self.action_space.n)[update_mask], dim=1))
 
-                    print("old latent: ")
-                    print(traj_old_latents.view(-1, self.action_space.n)[update_mask][0:5])
-                    print("new latent: ")
-                    print(latent.view(-1, self.action_space.n)[update_mask][0:5])
-                    print("Old dist: ")
-                    print(old_distribution.probs[0:5] * 100)
-                    print("Update dist: ")
-                    print(backward_distribution.probs[0:5]  * 100)
-                    print("Target dist:")
-                    print(new_distribution.probs[0:5]  * 100)
-                    if self.action_space.n == 2:
-                        abs_update = th.sign(backward_distribution.probs[:, 0] - old_distribution.probs[:, 0])
-                        abs_target = th.sign(new_distribution.probs[:, 0] - old_distribution.probs[:, 0])
-                        correct = th.sum(abs_target == abs_update)
-                        incorrect = abs_update.size(0) - correct
-                        print("correct: ", correct)
-                        print("wrong: ", incorrect)
-                        signs.append([correct, incorrect])
-                    # print("addition:")
-                    # print(addition.flatten()[update_mask][0:5])
-                    # print(update_mask[0:5])
-                '''
         
         if self.train_mode == 'policy':
-            with open(self.log_sign_dif_file, 'a') as f:
-                for correct, incorrect in signs:
-                    f.write("{}, {}\n".format(correct, incorrect))
+            with th.no_grad():
+                if self.action_space.n == 2:
+                    if self.train_mode != 'value' and is_last_step and (self.KL) and (self._n_updates % 50 == 0):
+                        latent, _ = self.policy.get_policy_latent(traj_states.view(-1, traj_states.size(-1)), use_behav=False)
+                        backward_distribution = Categorical(probs=F.softmax(latent.view(-1, self.action_space.n)[update_mask], dim=1))
+
+                        print("old latent: ")
+                        print(traj_old_latents.view(-1, self.action_space.n)[update_mask][0:5])
+                        print("new latent: ")
+                        print(latent.view(-1, self.action_space.n)[update_mask][0:5])
+                        print("Old dist: ")
+                        print(old_distribution.probs[0:5] * 100)
+                        print("Update dist: ")
+                        print(backward_distribution.probs[0:5]  * 100)
+                        print("Target dist:")
+                        print(new_distribution.probs[0:5]  * 100)
+                        
+                        
+                        correct = 0
+                        incorrect = 0
+                
+                        self.log_sign_dif_file.write("\n")
+                        np.set_printoptions(formatter={'float': '{: 0.4f}'.format})
+                        for _old, _new, _target in zip((old_distribution.probs).cpu().numpy(), (new_distribution.probs).cpu().numpy(), backward_distribution.probs.cpu().numpy()):
+                            _abs_update = np.sign(_target[0] - _old[0])
+                            _abs_target = np.sign(_new[0] - _old[0])
+                            _correct = _abs_update == _abs_target
+                            hint = "+++" if _correct else "-"
+                            if _correct:
+                                correct += 1
+                            else:
+                                incorrect += 1
+                            self.log_sign_dif_file.write("{} -> {}   :   {} {}\n".format(_old, _new, _target, hint))
+                        # self.log_sign_dif_file.write("old: {} \n".format(old_distribution.probs* 100))
+                        # self.log_sign_dif_file.write("new: {} \n".format(new_distribution.probs* 100))
+                        self.log_sign_dif_file.write("correct: {}, incorrect: {}\n".format(correct, incorrect))
+
             return
         else:
             self._n_updates += 1
@@ -1035,13 +1060,13 @@ class OffPAC(OffPolicyAlgorithm):
         log_interval: int = 10,
         eval_env: Optional[GymEnv] = None,
         eval_freq: int = -1,
-        n_eval_episodes: int = 5,
+        n_eval_episodes: int = 100,
         tb_log_name: str = "OFFPAC",
         eval_log_path: Optional[str] = None,
         reset_num_timesteps: bool = True,
     ) -> "OFFPAC":
 
-        return super(OffPAC, self).learn(
+        rv = super(OffPAC, self).learn(
             total_timesteps=total_timesteps,
             callback=callback,
             log_interval=log_interval,
@@ -1053,3 +1078,4 @@ class OffPAC(OffPolicyAlgorithm):
             reset_num_timesteps=reset_num_timesteps,
             use_trajectory_buffer=True
         )
+        return rv

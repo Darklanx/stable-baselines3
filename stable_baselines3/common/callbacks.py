@@ -116,6 +116,31 @@ class BaseCallback(ABC):
         """
         pass
 
+class CustomCallback(BaseCallback):
+    """
+    Callback for saving a model every ``save_freq`` steps
+
+    :param save_freq:
+    :param save_path: Path to the folder where the model will be saved.
+    :param name_prefix: Common prefix to the saved models
+    :param verbose:
+    """
+
+    def __init__(self, save_path: str, verbose: int = 0):
+        super(CustomCallback, self).__init__(verbose)
+        self.save_path = save_path
+
+    def _init_callback(self) -> None:
+        # Create folder if needed
+        if self.save_path is not None:
+            os.makedirs(self.save_path, exist_ok=True)
+
+    def _on_step(self) -> bool:
+        return True
+
+    def _on_training_end(self) -> None:
+        print(self.save_path)
+        exit()
 
 class EventCallback(BaseCallback):
     """

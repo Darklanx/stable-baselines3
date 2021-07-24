@@ -92,6 +92,7 @@ class OffPACPolicy(BasePolicy):
         optimizer_kwargs: Optional[Dict[str, Any]] = None,
         share: bool = True
     ):
+
         self.share = share
         if optimizer_kwargs is None:
             optimizer_kwargs = {}
