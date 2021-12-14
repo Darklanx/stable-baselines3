@@ -67,7 +67,7 @@ class OffPAC(OffPolicyAlgorithm):
         ent_coef: float = 0.0,
         vf_coef: float = 0.5,
         max_grad_norm: float = 0.5,
-        train_freq: Union[int, Tuple[int, str]] = (128, "episode"),
+        train_freq: Union[int, Tuple[int, str]] = (128, 'step'),
         gradient_steps: int = 1,
         action_noise: Optional[ActionNoise] = None,
         optimize_memory_usage: bool = False,
@@ -123,10 +123,9 @@ class OffPAC(OffPolicyAlgorithm):
         )
 
 
-        assert save_path != None
         self.save_path = save_path
 
-        self.log_sign_dif_file = open(os.path.join(self.save_path, 'sign.txt'), 'a+', buffering=1)
+        # self.log_sign_dif_file = open(os.path.join(self.save_path, 'sign.txt'), 'a+', buffering=1)
 
         self.use_mse = use_mse
         self.use_v_net = use_v_net
@@ -156,7 +155,8 @@ class OffPAC(OffPolicyAlgorithm):
         self.exploration_rate = exploration_initial_eps
         # Linear schedule will be defined in `_setup_model()`
         self.exploration_schedule = None
-        self.trajectories = [Trajectory(self.device) for i in range(self.n_envs)]
+        if self.n_envs is not None:
+            self.trajectories = [Trajectory(self.device) for i in range(self.n_envs)]
         '''
         # Update optimizer inside the policy if we want to use RMSProp
         # (original implementation) rather than Adam
@@ -168,14 +168,6 @@ class OffPAC(OffPolicyAlgorithm):
         if _init_setup_model:
             self._setup_model()
 
-        self.rollout_buffer = RolloutBuffer(
-            self.train_freq.frequency,
-            self.observation_space,
-            self.action_space,
-            self.device,
-            gamma=self.gamma,
-            n_envs=self.n_envs,
-        )
         
 
     def __getstate__(self):
@@ -196,6 +188,14 @@ class OffPAC(OffPolicyAlgorithm):
         self.replay_buffer = self.trajectory_buffer
         self.exploration_schedule = get_linear_fn(
             self.exploration_initial_eps, self.exploration_final_eps, self.exploration_fraction
+        )
+        self.rollout_buffer = RolloutBuffer(
+            self.train_freq.frequency,
+            self.observation_space,
+            self.action_space,
+            self.device,
+            gamma=self.gamma,
+            n_envs=self.n_envs,
         )
 
     def _create_aliases(self) -> None:
@@ -609,6 +609,8 @@ class OffPAC(OffPolicyAlgorithm):
             all_states, all_actions, all_rewards, all_next_states, all_dones, lengths, all_probs = [], [], [], [],[], [], []
             all_next_states = []
             # we merge all the trajectories together for batch ".to(device)", later we extract the trajectories by using "lengths:list"
+            ms=[0]
+            get_ms(ms)
             for i, traj in enumerate(trajectories):
                 
                 states, actions, rewards, next_states, dones, probs = traj.get_tensors(device='cpu')
@@ -619,6 +621,8 @@ class OffPAC(OffPolicyAlgorithm):
                 all_next_states.append(next_states[-1].unsqueeze(0))
                 all_dones.append(dones)
                 all_probs.append(probs)
+            # print("loop traj: ", ms[0] - get_ms(ms))
+            
 
             all_states = th.cat(all_states).to(self.device)
             all_actions = th.cat(all_actions).to(self.device)
@@ -648,6 +652,7 @@ class OffPAC(OffPolicyAlgorithm):
             indexes = []
             next_state_values = []
             # print('1:', ms[0] - get_ms(ms))
+            get_ms(ms)
             for traj_i, traj in enumerate(trajectories):
         
                 # t = [0]
@@ -687,12 +692,9 @@ class OffPAC(OffPolicyAlgorithm):
                 print("d:", probs.size())
                 '''
                 # KL theta
-                
                 latent, old_distribution = self.policy.get_policy_latent(states, use_behav=False)
                 # latent = latent / th.max(th.abs(latent), dim=1)[0].view(-1, 1)
                 # latent = latent - th.mean(latent, dim=1).view(-1,1)
-                # print("1:")
-                # print(ms[0] - get_ms(ms))
                 if states.dim() == 1:
                     states = states.unsqueeze(0)
 
@@ -732,7 +734,7 @@ class OffPAC(OffPolicyAlgorithm):
                 # print(ms[0] - get_ms(ms))
                 # print(t[0] - get_ms(t))
 
-            # print(ms[0] - get_ms(ms))
+            # print("traj handle time: ", ms[0] - get_ms(ms))
                 # exit()
             # print(max_len)
             # print(min_len)
@@ -745,7 +747,7 @@ class OffPAC(OffPolicyAlgorithm):
             traj_target_Q_values, _ = self.padding_tensor(traj_target_Q_values, self.device, max_len)
             traj_rhos, _ = self.padding_tensor(traj_rhos, self.device, max_len)
             traj_log_probs, _ = self.padding_tensor(traj_log_probs, self.device, max_len)
-            _traj_latents = th.cat(traj_latents).to(self.device).flatten().reshape(-1, 2)
+            # _traj_latents = th.cat(traj_latents).to(self.device).flatten().reshape(-1, 2)
             traj_latents, _ = self.padding_tensor(traj_latents, self.device, max_len)
             # print(traj_latents)
             # print(traj_latents.size())
@@ -1002,7 +1004,7 @@ class OffPAC(OffPolicyAlgorithm):
             th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
 
             self.policy.optimizer.step()
-
+            print("step: ", ms[0] - get_ms(ms))
         
         if self.train_mode == 'policy':
             with th.no_grad():
