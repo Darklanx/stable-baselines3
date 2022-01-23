@@ -40,10 +40,12 @@ class Env:
         else:
             self.random = random_state
         self.reset()
+        self.episode_len = 0
 
     # Update environment according to agent action
     def act(self, a):
         r = 0
+        
         if(self.terminal):
             return r, self.terminal
             
@@ -93,7 +95,10 @@ class Env:
         self.spawn_timer -= 1
         self.move_timer -= 1
 
-
+        self.episode_len += 1
+        if self.episode_len >= self.max_episode_len:
+            self.terminal = True
+            
         #Ramp difficulty if interval has elapsed
         if self.ramping and (self.spawn_speed>1 or self.move_speed>1):
             if(self.ramp_timer>=0):
@@ -148,6 +153,7 @@ class Env:
         self.ramp_timer = ramp_interval
         self.ramp_index = 0
         self.terminal = False
+        self.episode_len = 0
 
     # Dimensionality of the game-state (10x10xn)
     def state_shape(self):

@@ -25,6 +25,7 @@ class Environment:
         self.last_action = 0
         self.visualized = False
         self.closed = False
+        self.max_episode_len = 10000
 
     # Wrapper for env.act
     def act(self, a):

@@ -30,6 +30,8 @@ class Env:
         else:
             self.random = random_state
         self.reset()
+        self.episode_len = 0
+        self.max_episode_len = 10000
 
     # Update environment according to agent action
     def act(self, a):
@@ -96,6 +98,11 @@ class Env:
 
         self.ball_x = new_x
         self.ball_y = new_y
+
+        self.episode_len += 1
+        if self.episode_len >= self.max_episode_len:
+            self.terminal = True
+
         return r, self.terminal
 
     # Query the current level of the difficulty ramp, difficulty does not ramp in this game, so return None
@@ -123,6 +130,7 @@ class Env:
         self.last_x = self.ball_x
         self.last_y = self.ball_y
         self.terminal = False
+        self.episode_len = 0
 
     # Dimensionality of the game-state (10x10xn)
     def state_shape(self):

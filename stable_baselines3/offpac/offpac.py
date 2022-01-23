@@ -1004,7 +1004,7 @@ class OffPAC(OffPolicyAlgorithm):
             th.nn.utils.clip_grad_norm_(self.policy.parameters(), self.max_grad_norm)
 
             self.policy.optimizer.step()
-            print("step: ", ms[0] - get_ms(ms))
+            # print("step: ", ms[0] - get_ms(ms))
         
         if self.train_mode == 'policy':
             with th.no_grad():

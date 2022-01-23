@@ -11,6 +11,7 @@ class MinAtarEnv(gym.Env):
     # Define action and observation space
     # They must be gym.spaces objects
     N_DISCRETE_ACTIONS = 6 
+
     env_module = import_module('stable_baselines3.minatar.environments.'+env_id)
     self.random = np.random.RandomState(seed)
     self.env = env_module.Env(ramping = True, random_state = self.random)
@@ -18,6 +19,7 @@ class MinAtarEnv(gym.Env):
     # self.observation_space = spaces.Discrete(10 * 10 * len(self.env.channels))
     self.observation_space = spaces.Box(low=0, high=1,
                                         shape=(len(self.env.channels), 10, 10), dtype=np.bool)
+    
 
 
   def step(self, action):
@@ -25,10 +27,12 @@ class MinAtarEnv(gym.Env):
     observation = self.env.state()
     info = {}
     return np.moveaxis(observation, -1, 0), reward, done, info
+
   def reset(self):
     self.env.reset()
     observation = self.env.state()
     return np.moveaxis(observation, -1, 0)  # reward, done, info can't be included
+
   def render(self, mode='human'):
     return
   def close (self):

@@ -59,6 +59,7 @@ class Env:
             self.random = np.random.RandomState()
         else:
             self.random = random_state
+        self.episode_len = 0
         self.reset()
 
     # Update environment according to agent action
@@ -205,6 +206,12 @@ class Env:
                     self.terminal = True
                 else:
                     r+=self._surface()
+                    
+        self.episode_len += 1
+        if self.episode_len >= self.max_episode_len:
+            self.terminal = True
+
+
         return r, self.terminal
 
     # Called when player hits surface (top row) if they have no divers, this ends the game, 
@@ -305,6 +312,7 @@ class Env:
         self.shot_timer = 0
         self.surface = True
         self.terminal = False
+        self.episode_len = 0
 
     # Dimensionality of the game-state (10x10xn)
     def state_shape(self):

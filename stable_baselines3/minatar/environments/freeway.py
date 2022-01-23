@@ -43,7 +43,9 @@ class Env:
             self.random = np.random.RandomState()
         else:
             self.random = random_state
+        self.episode_len = 0
         self.reset()
+        
 
     # Update environment according to agent action
     def act(self, a):
@@ -137,7 +139,7 @@ class Env:
         self.move_timer = player_speed
         self.terminate_timer = time_limit
         self.terminal = False
-
+        self.episode_len = 0
     # Dimensionality of the game-state (10x10xn)
     def state_shape(self):
         return [10,10,len(self.channels)]

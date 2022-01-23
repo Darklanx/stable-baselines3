@@ -44,6 +44,7 @@ class Env:
             self.random = np.random.RandomState()
         else:
             self.random = random_state
+        self.episode_len = 0
         self.reset()
 
     # Update environment according to agent action
@@ -107,6 +108,12 @@ class Env:
                 self.enemy_move_interval-=1
                 self.ramp_index+=1
             self.alien_map[0:4,2:8] = 1
+
+        self.episode_len += 1
+        if self.episode_len >= self.max_episode_len:
+            self.terminal = True
+
+
         return r, self.terminal
 
     # Find the alien closest to player in manhattan distance, currently used to decide which alien shoots
@@ -149,6 +156,7 @@ class Env:
         self.ramp_index = 0
         self.shot_timer = 0
         self.terminal = False
+        self.episode_len = 0
 
     # Dimensionality of the game-state (10x10xn)
     def state_shape(self):
