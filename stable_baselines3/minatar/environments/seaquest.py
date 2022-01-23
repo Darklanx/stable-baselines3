@@ -60,6 +60,7 @@ class Env:
         else:
             self.random = random_state
         self.episode_len = 0
+        self.max_episode_len = 1000000
         self.reset()
 
     # Update environment according to agent action

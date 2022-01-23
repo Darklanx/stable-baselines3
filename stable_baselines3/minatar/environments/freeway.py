@@ -44,6 +44,7 @@ class Env:
         else:
             self.random = random_state
         self.episode_len = 0
+        self.max_episode_len = 100000000
         self.reset()
         
 
@@ -89,6 +90,11 @@ class Env:
         self.terminate_timer-=1
         if(self.terminate_timer<0):
             self.terminal = True
+
+        self.episode_len += 1
+        if self.episode_len >= self.max_episode_len:
+            self.terminal = True
+            
         return r, self.terminal
 
     # Query the current level of the difficulty ramp, difficulty does not ramp in this game, so return None

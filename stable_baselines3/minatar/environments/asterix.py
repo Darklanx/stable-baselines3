@@ -41,6 +41,7 @@ class Env:
             self.random = random_state
         self.reset()
         self.episode_len = 0
+        self.max_episode_len = 1000000
 
     # Update environment according to agent action
     def act(self, a):
