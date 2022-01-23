@@ -834,7 +834,7 @@ class OffPAC(OffPolicyAlgorithm):
                     with th.no_grad():
 
                         traj_action_probs = th.exp(traj_log_probs)
-                        alpha = 1.0 / traj_action_probs 
+                        alpha = th.log(1.0 / traj_action_probs)
                         alpha = th.clamp(alpha, max=self.max_alpha)
 
                         if i_gradient_step == 0 and False:
