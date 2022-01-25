@@ -73,6 +73,7 @@ def evaluate_policy(
 
     episode_rewards, episode_lengths = [], []
     not_reseted = True
+    print(n_eval_episodes)
     while len(episode_rewards) < n_eval_episodes:
         # Number of loops here might differ from true episodes
         # played, if underlying wrappers modify episode lengths.
