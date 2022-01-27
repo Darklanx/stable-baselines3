@@ -94,7 +94,7 @@ class Env:
         self.episode_len += 1
         if self.episode_len >= self.max_episode_len:
             self.terminal = True
-            
+
         return r, self.terminal
 
     # Query the current level of the difficulty ramp, difficulty does not ramp in this game, so return None
