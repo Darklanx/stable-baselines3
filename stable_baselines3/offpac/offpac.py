@@ -208,6 +208,7 @@ class OffPAC(OffPolicyAlgorithm):
         self.a_mlp_extractor = self.policy.a_mlp_extractor
         self.a_mlp_extractor_target = self.policy.a_mlp_extractor_target
         self.value_net = self.policy.value_net
+        
 
     def _store_transition(
         self, 
@@ -860,7 +861,7 @@ class OffPAC(OffPolicyAlgorithm):
                         # th.set_printoptions(precision=6)
                         th.set_printoptions(precision=2, threshold=None, edgeitems=None, linewidth=None, profile=None, sci_mode=False)
                         # addition = (th.sign(advantages) * (alpha * (1-traj_action_probs))).unsqueeze(-1)
-                        addition = (th.sign(advantages) * (alpha * (1-traj_action_probs) + 0.1)).unsqueeze(-1)
+                        addition = (th.sign(advantages) * (alpha + 0.1)).unsqueeze(-1)
                         
 
 

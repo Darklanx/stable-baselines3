@@ -18,7 +18,7 @@ def evaluate_policy(
     reward_threshold: Optional[float] = None,
     return_episode_rewards: bool = False,
     warn: bool = True,
-    max_episode_len=10000
+    max_episode_len=1000000
 ) -> Union[Tuple[float, float], Tuple[List[float], List[int]]]:
     """
     Runs policy for ``n_eval_episodes`` episodes and returns average reward.
@@ -73,7 +73,7 @@ def evaluate_policy(
 
     episode_rewards, episode_lengths = [], []
     not_reseted = True
-    print(n_eval_episodes)
+    print(max_episode_len)
     while len(episode_rewards) < n_eval_episodes:
         # Number of loops here might differ from true episodes
         # played, if underlying wrappers modify episode lengths.
@@ -92,6 +92,7 @@ def evaluate_policy(
                 callback(locals(), globals())
             episode_length += 1
             if episode_length > max_episode_len:
+                print("eval max episode len, break!")
                 done = True
             if render:
                 env.render()
