@@ -836,6 +836,7 @@ class OffPAC(OffPolicyAlgorithm):
 
                         traj_action_probs = th.exp(traj_log_probs)
                         alpha = th.log(1.0 / traj_action_probs)
+                        # alpha = 1.0 / traj_action_probs
                         alpha = th.clamp(alpha, max=self.max_alpha)
 
                         if i_gradient_step == 0 and False:
@@ -862,7 +863,7 @@ class OffPAC(OffPolicyAlgorithm):
                         th.set_printoptions(precision=2, threshold=None, edgeitems=None, linewidth=None, profile=None, sci_mode=False)
                         # addition = (th.sign(advantages) * (alpha * (1-traj_action_probs))).unsqueeze(-1)
                         addition = (th.sign(advantages) * (alpha + 0.1)).unsqueeze(-1)
-                        
+
 
 
                         
