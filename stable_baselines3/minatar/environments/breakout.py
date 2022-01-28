@@ -33,6 +33,7 @@ class Env:
         self.episode_len = 0
         self.max_episode_len = 100000000
 
+
     # Update environment according to agent action
     def act(self, a):
         r = 0
