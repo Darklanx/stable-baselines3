@@ -2,6 +2,7 @@
 
 import io
 import pathlib
+from tabnanny import verbose
 import time
 from abc import ABC, abstractmethod
 from collections import deque
@@ -20,7 +21,7 @@ from stable_baselines3.common.noise import ActionNoise
 from stable_baselines3.common.policies import BasePolicy, get_policy_from_name
 from stable_baselines3.common.preprocessing import check_for_nested_spaces, is_image_space, is_image_space_channels_first
 from stable_baselines3.common.save_util import load_from_zip_file, recursive_getattr, recursive_setattr, save_to_zip_file
-from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
+from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule, TrainFreq, TrainFrequencyUnit
 from stable_baselines3.common.utils import (
     check_for_correct_spaces,
     get_device,
@@ -110,7 +111,8 @@ class BaseAlgorithm(ABC):
         self.device = get_device(device)
         if verbose > 0:
             print(f"Using {self.device} device")
-
+        
+        self.hparams = {} # use to log tensorboard hparams
         self.env = None  # type: Optional[GymEnv]
         # get VecNormalize object if needed
         self._vec_normalize_env = unwrap_vec_normalize(env)
@@ -443,8 +445,34 @@ class BaseAlgorithm(ABC):
 
         # Create eval callback if needed
         callback = self._init_callback(callback, eval_env, eval_freq, n_eval_episodes, log_path)
+        self.setup_hparams()
+        self.log_tensorboard_hyperparam(self.logger.get_tb_summary_writer(), self.hparams)
 
         return total_timesteps, callback
+
+    def update_hparams(self, key, param):
+        self.hparams.update({key: param})
+
+    def setup_hparams(self):
+        self.hparams.update({"n_envs": self.n_envs})
+        self.hparams.update({"n_timesteps": self._total_timesteps})
+        if hasattr(self, 'train_freq') and self.train_freq is not None and self.train_freq.unit == TrainFrequencyUnit.STEP:
+            self.hparams.update({"n_steps": self.train_freq.frequency})
+
+    
+    def log_tensorboard_hyperparam(self, logger, params:dict):
+        if logger is None:
+            if self.verbose > 1:
+                print("No tb logger found!")
+            return False
+        if isinstance(logger, Logger):
+            logger = logger.get_tb_summary_writer() # summary writer
+        if logger is not None:
+            logger.add_hparams(params, {"null":0})
+        if self.verbose > 1:
+            print("Tensorboard hparams logged!")
+
+        return True
 
     def _update_info_buffer(self, infos: List[Dict[str, Any]], dones: Optional[np.ndarray] = None) -> None:
         """
@@ -510,7 +538,7 @@ class BaseAlgorithm(ABC):
 
         self.n_envs = env.num_envs
         self.env = env
-
+    
     @abstractmethod
     def learn(
         self,
