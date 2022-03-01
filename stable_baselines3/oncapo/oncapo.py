@@ -9,7 +9,7 @@ from stable_baselines3.common.on_policy_algorithm import OnPolicyAlgorithm
 from stable_baselines3.oncapo.policies import OnCAPOMlpPolicy
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.utils import explained_variance
-
+from torch.distributions import Categorical
 
 class OnCAPO(OnPolicyAlgorithm):
     """
@@ -140,20 +140,25 @@ class OnCAPO(OnPolicyAlgorithm):
             # policy_loss = -(advantages * log_prob).mean()
 
             thetas = self.policy.get_theta(rollout_data.observations)
-            updating_thetas = th.gather(thetas, 1, actions.reshape(-1,1).long()) 
+            # updating_thetas = th.gather(thetas, 1, actions.reshape(-1,1).long()) 
             with th.no_grad():
-                # thetas_hat = thetas.detach().clone()
+                thetas_hat = thetas.detach().clone()
                 # reshape actions from (batchsize) => (batchsize, 1) to scatter
-                alpha = th.log(th.tensor(1.0)) - rollout_data.old_log_prob
+                alpha = -1 * rollout_data.old_log_prob 
                 assert alpha.shape == advantages.shape
                 addition = alpha * th.sign(advantages)
-                # thetas_hat = thetas_hat + th.zeros_like(thetas_hat).scatter_(1, actions.reshape(-1,1).long(), addition.reshape(-1, 1)) 
+                thetas_hat = thetas_hat + th.zeros_like(thetas_hat).scatter_(1, actions.reshape(-1,1).long(), addition.reshape(-1, 1)) 
                 addition = addition.reshape(-1, 1)
-                assert addition.shape == updating_thetas.shape
-                target_theta = updating_thetas + addition
+                # assert addition.shape == updating_thetas.shape
+                # target_theta = updating_thetas + addition
+            # print(max(rollout_data.old_log_prob.exp()))
+            # policy_loss = ((updating_thetas - target_theta) ** 2).mean()
+            old_distribution = Categorical(probs=F.softmax(thetas, dim=1))
+            # print(old_distribution.probs)
+            new_distribution = Categorical(probs=F.softmax(thetas_hat.detach(), dim=1))
+            policy_loss = th.distributions.kl_divergence(old_distribution, new_distribution).mean()
+            # print(thetas - thetas_hat)
 
-            policy_loss = ((updating_thetas - target_theta) ** 2).mean()
-            # print(updating_thetas -target_theta)
             # print("actions: ", actions.reshape(-1, 1))
             # print("addition: ", addition.reshape(-1, 1))
             # exit()
@@ -185,6 +190,11 @@ class OnCAPO(OnPolicyAlgorithm):
         self.logger.record("train/explained_variance", explained_var)
         self.logger.record("train/entropy_loss", entropy_loss.item())
         self.logger.record("train/policy_loss", policy_loss.item())
+        self.logger.record("train/mean_alpha", alpha.mean().item())
+        self.logger.record("train/max_alpha", alpha.max().item())
+        self.logger.record("train/min_alpha", alpha.min().item())
+
+
         self.logger.record("train/value_loss", value_loss.item())
         if hasattr(self.policy, "log_std"):
             self.logger.record("train/std", th.exp(self.policy.log_std).mean().item())
