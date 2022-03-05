@@ -1,3 +1,4 @@
+from lib2to3.pytree import Base
 import warnings
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Generator, List, Optional, Union
@@ -12,6 +13,8 @@ from stable_baselines3.common.type_aliases import (
     DictRolloutBufferSamples,
     ReplayBufferSamples,
     RolloutBufferSamples,
+    TrainFreq,
+    TrajectoryBufferSamples
 )
 from stable_baselines3.common.vec_env import VecNormalize
 
@@ -112,7 +115,7 @@ class BaseBuffer(ABC):
     @abstractmethod
     def _get_samples(
         self, batch_inds: np.ndarray, env: Optional[VecNormalize] = None
-    ) -> Union[ReplayBufferSamples, RolloutBufferSamples]:
+    ) -> Union[ReplayBufferSamples, RolloutBufferSamples, TrajectoryBufferSamples]:
         """
         :param batch_inds:
         :param env:
@@ -148,6 +151,186 @@ class BaseBuffer(ABC):
         if env is not None:
             return env.normalize_reward(reward).astype(np.float32)
         return reward
+
+# class RetraceBuffer(BaseBuffer):
+#     def __init__(self, 
+#         buffer_size: int,
+#         observation_space: spaces.Space,
+#         action_space: spaces.Space,
+#         device: Union[th.device, str] = "cpu",
+#         retrace_lambda: float = 1,
+#         gamma: float = 0.99,
+#         n_envs: int = 1,
+#     ):
+#         super(RetraceBuffer, self).__init__(buffer_size, observation_space, action_space, device, n_envs=n_envs)
+#         self.retrace_lambda = retrace_lambda
+#         self.gamma = gamma
+#         self.observations, self.actions, self.rewards, self.advantages = None, None, None, None
+#         self.returns, self.episode_starts, self.values, self.log_probs = None, None, None, None
+#         self.dones = None
+#         self.full = False
+#         self.reset()
+    
+#     def reset(self) -> None:
+#         shape = (self.buffer_size, self.n_envs) 
+#         self.observations = np.zeros(shape + self.obs_shape, dtype=np.float32)
+#         self.next_observations = np.zeros(shape + self.obs_shape, dtype=np.float32)
+#         self.actions = np.zeros(shape + (self.action_dim,), dtype=np.float32)
+#         self.rewards = np.zeros(shape, dtype=np.float32)
+#         self.returns = np.zeros(shape, dtype=np.float32)
+#         self.episode_starts = np.zeros(shape, dtype=np.float32)
+#         self.values = np.zeros(shape, dtype=np.float32)
+#         self.dones = np.zeros(shape, dtype=np.float32)
+#         # self.log_probs = np.zeros(shape, dtype=np.float32)
+#         self.advantages = np.zeros(shape, dtype=np.float32)
+#         self.full = False
+#         super(RetraceBuffer, self).reset()
+
+#     def add(
+#         self,
+#         obs: np.ndarray,
+#         next_obs: np.ndarray,
+#         action: np.ndarray,
+#         reward: np.ndarray,
+#         done: np.ndarray,
+#         infos: List[Dict[str, Any]],
+#     ) -> None:
+
+#         # Reshape needed when using multiple envs with discrete observations
+#         # as numpy cannot broadcast (n_discrete,) to (n_discrete, 1)
+#         if isinstance(self.observation_space, spaces.Discrete):
+#             obs = obs.reshape((self.n_envs,) + self.obs_shape)
+#             next_obs = next_obs.reshape((self.n_envs,) + self.obs_shape)
+
+#         # Same, for actions
+#         if isinstance(self.action_space, spaces.Discrete):
+#             action = action.reshape((self.n_envs, self.action_dim))
+
+#         # Copy to avoid modification by reference
+#         self.observations[self.pos] = np.array(obs).copy()
+
+#         if self.optimize_memory_usage:
+#             self.observations[(self.pos + 1) % self.buffer_size] = np.array(next_obs).copy()
+#         else:
+#             self.next_observations[self.pos] = np.array(next_obs).copy()
+
+#         self.actions[self.pos] = np.array(action).copy()
+#         self.rewards[self.pos] = np.array(reward).copy()
+#         self.dones[self.pos] = np.array(done).copy()
+
+#         if self.handle_timeout_termination:
+#             self.timeouts[self.pos] = np.array([info.get("TimeLimit.truncated", False) for info in infos])
+
+#         self.pos += 1
+#         if self.pos == self.buffer_size:
+#             self.full = True
+#             self.pos = 0
+
+class TrajectoryBuffer(BaseBuffer):
+    def __init__(
+        self,
+        buffer_size: int,
+        train_freq: int,
+        observation_space: spaces.Space,
+        action_space: spaces.Space,
+        device: Union[th.device, str] = "cpu",
+        n_envs: int = 1
+    ):
+        super(TrajectoryBuffer, self).__init__(
+            buffer_size, observation_space, action_space, 
+            device=device, 
+            n_envs=n_envs
+            )
+        # self.trajectories = []
+        if isinstance(train_freq, TrainFreq):
+            train_freq = train_freq.unit
+        self.train_freq = train_freq
+        self.observations = np.zeros((self.buffer_size, self.train_freq) + observation_space.shape, dtype=observation_space.dtype)
+        self.new_obs = np.zeros((self.buffer_size, self.train_freq) + observation_space.shape, dtype=observation_space.dtype)
+        self.actions = np.zeros((self.buffer_size, self.train_freq) + self.action_space.shape, dtype=action_space.dtype)
+        self.rewards = np.zeros((self.buffer_size, self.train_freq), dtype=action_space.dtype)
+        self.dones = np.zeros((self.buffer_size, self.train_freq), dtype=action_space.dtype)
+        self.reset()
+
+    
+    def reset(self) -> None:
+        super(TrajectoryBuffer, self).reset()
+
+    def add(
+        self, 
+        observations, 
+        actions, 
+        rewards,
+        new_obs,
+        dones
+        #episode_starts
+    ) -> None:
+        """
+        :param obs: Observation
+        :param action: Action
+        :param reward:
+        :param episode_start: Start of episode signal.
+        :param value: estimated value of the current state
+            following the current policy.
+        :param log_prob: log probability of the action
+            following the current policy.
+        """
+
+        if actions.shape == (self.n_envs, self.train_freq) + self.action_space.shape + (1,):
+            actions = np.squeeze(actions)
+
+        self.observations[self.pos: self.pos+self.n_envs] = observations
+        self.new_obs[self.pos: self.pos+self.n_envs] = new_obs
+        self.actions[self.pos: self.pos+self.n_envs] = actions
+
+        self.rewards[self.pos: self.pos+self.n_envs] = rewards
+        self.dones[self.pos: self.pos+self.n_envs] = dones
+        self.pos += self.n_envs
+        assert self.pos <= self.buffer_size, (
+            f"self.pos={self.pos} exceed self.buffer_size," 
+        "   probably because buff_size is not a multiple of n_envs"
+        )
+        if self.pos == self.buffer_size:
+            self.pos = 0
+            self.full = True
+    def sample(self, batch_size: int, env: Optional[VecNormalize] = None):
+        """
+        :param batch_size: Number of element to sample
+        :param env: associated gym VecEnv
+            to normalize the observations/rewards when sampling
+        :return:
+        """
+        if self.full:
+            batch_size = min(batch_size, self.buffer_size)
+        else:
+            batch_size = min(batch_size, self.pos)
+        upper_bound = self.buffer_size if self.full else self.pos
+        batch_inds = np.random.randint(0, upper_bound, size=batch_size)
+        return self._get_samples(batch_inds, env=env)
+
+    def get(self, batch_size = None):
+        assert self.full, ""
+        indices = np.random.permutation(self.buffer_size)
+        if batch_size is None:
+            batch_size = self.buffer_size 
+
+        start_idx = 0
+        while start_idx < self.buffer_size:
+            yield self._get_samples(indices[start_idx : start_idx + batch_size])
+            start_idx += batch_size
+
+    def _get_samples(self, batch_inds: np.ndarray, env: Optional[VecNormalize] = None) -> RolloutBufferSamples:
+        # Sample randomly the env idx
+
+        data = (
+            self._normalize_obs(self.observations[batch_inds, :], env),
+            self.actions[batch_inds, :],
+            self._normalize_obs(self.new_obs[batch_inds, :], env),
+            self.dones[batch_inds],
+            # self._normalize_reward(self.rewards[batch_inds], env),
+            self.rewards[batch_inds, :]
+        )
+        return TrajectoryBufferSamples(*tuple(map(self.to_torch, data)))
 
 
 class ReplayBuffer(BaseBuffer):
@@ -304,6 +487,152 @@ class ReplayBuffer(BaseBuffer):
         )
         return ReplayBufferSamples(*tuple(map(self.to_torch, data)))
 
+
+class RetraceBuffer(BaseBuffer):
+    """
+    Rollout buffer used in on-policy algorithms like A2C/PPO.
+    It corresponds to ``buffer_size`` transitions collected
+    using the current policy.
+    This experience will be discarded after the policy update.
+    In order to use PPO objective, we also store the current value of each state
+    and the log probability of each taken action.
+
+    The term rollout here refers to the model-free notion and should not
+    be used with the concept of rollout used in model-based RL or planning.
+    Hence, it is only involved in policy and value function training but not action selection.
+
+    :param buffer_size: Max number of element in the buffer
+    :param observation_space: Observation space
+    :param action_space: Action space
+    :param device:
+    :param gae_lambda: Factor for trade-off of bias vs variance for Generalized Advantage Estimator
+        Equivalent to classic advantage when set to 1.
+    :param gamma: Discount factor
+    :param n_envs: Number of parallel environments
+    """
+
+    def __init__(
+        self,
+        buffer_size: int,
+        observation_space: spaces.Space,
+        action_space: spaces.Space,
+        device: Union[th.device, str] = "cpu",
+        gamma: float = 0.99,
+        n_envs: int = 1,
+    ):
+
+        super(RetraceBuffer, self).__init__(buffer_size, observation_space, action_space, device, n_envs=n_envs)
+        self.gamma = gamma
+        self.observations, self.actions, self.rewards, self.advantages = None, None, None, None
+        self.returns, self.episode_starts, self.values, self.log_probs = None, None, None, None
+        self.generator_ready = False
+        self.reset()
+
+    def reset(self) -> None:
+
+        self.observations = np.zeros((self.buffer_size, self.n_envs) + self.obs_shape, dtype=np.float32)
+        self.actions = np.zeros((self.buffer_size, self.n_envs, self.action_dim), dtype=np.float32)
+        self.rewards = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        # self.returns = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.new_obs = np.zeros((self.buffer_size, self.n_envs) + self.obs_shape, dtype=np.float32)
+        self.dones = np.zeros((self.buffer_size, self.n_envs), dtype=bool)
+        self.values = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        # self.log_probs = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.advantages = np.zeros((self.buffer_size, self.n_envs), dtype=np.float32)
+        self.generator_ready = False
+        super(RetraceBuffer, self).reset()
+
+    def get_trajectories(self):
+        assert self.full, ""
+        return (
+            np.moveaxis(self.observations, 1, 0), 
+            np.moveaxis(self.actions, 1, 0),
+            np.moveaxis(self.rewards, 1, 0),
+            np.moveaxis(self.new_obs, 1, 0),
+            np.moveaxis(self.dones, 1, 0),
+        )
+
+    def add(
+        self,
+        obs: np.ndarray,
+        action: np.ndarray,
+        reward: np.ndarray,
+        new_obs: np.ndarray,
+        done: np.ndarray,
+        # value: th.Tensor,
+        # log_prob: th.Tensor,
+    ) -> None:
+        """
+        :param obs: Observation
+        :param action: Action
+        :param reward:
+        :param episode_start: Start of episode signal.
+        :param value: estimated value of the current state
+            following the current policy.
+        :param log_prob: log probability of the action
+            following the current policy.
+        """
+        # if len(log_prob.shape) == 0:
+        #     # Reshape 0-d tensor to avoid error
+        #     log_prob = log_prob.reshape(-1, 1)
+
+        # Reshape needed when using multiple envs with discrete observations
+        # as numpy cannot broadcast (n_discrete,) to (n_discrete, 1)
+        if isinstance(self.observation_space, spaces.Discrete):
+            obs = obs.reshape((self.n_envs,) + self.obs_shape)
+            new_obs = new_obs.reshape((self.n_envs,) + self.obs_shape)
+        if isinstance(self.action_space, spaces.Discrete):
+            action = action.reshape((self.n_envs, self.action_dim))
+
+        self.observations[self.pos] = np.array(obs).copy()
+        self.actions[self.pos] = np.array(action).copy()
+        self.rewards[self.pos] = np.array(reward).copy()
+        self.new_obs[self.pos] = np.array(new_obs).copy()
+        self.dones[self.pos] = np.array(done).copy()
+        # self.values[self.pos] = value.clone().cpu().numpy().flatten()
+        # self.log_probs[self.pos] = log_prob.clone().cpu().numpy()
+        self.pos += 1
+        if self.pos == self.buffer_size:
+            self.full = True
+
+    def get(self, batch_size: Optional[int] = None) -> Generator[RolloutBufferSamples, None, None]:
+        assert self.full, ""
+        indices = np.random.permutation(self.buffer_size * self.n_envs)
+        # Prepare the data
+        if not self.generator_ready:
+
+            _tensor_names = [
+                "observations",
+                "actions",
+                "values",
+                "log_probs",
+                "advantages",
+                "returns",
+            ]
+
+            for tensor in _tensor_names:
+                self.__dict__[tensor] = self.swap_and_flatten(self.__dict__[tensor])
+            self.generator_ready = True
+
+        # Return everything, don't create minibatches
+        if batch_size is None:
+            batch_size = self.buffer_size * self.n_envs
+
+        start_idx = 0
+        while start_idx < self.buffer_size * self.n_envs:
+            yield self._get_samples(indices[start_idx : start_idx + batch_size])
+            start_idx += batch_size
+
+    def _get_samples(self, batch_inds: np.ndarray, env: Optional[VecNormalize] = None) -> RolloutBufferSamples:
+        data = (
+            self.observations[batch_inds],
+            self.actions[batch_inds],
+            self.values[batch_inds].flatten(),
+            self.log_probs[batch_inds].flatten(),
+            self.advantages[batch_inds].flatten(),
+            self.returns[batch_inds].flatten(),
+        )
+        return RolloutBufferSamples(*tuple(map(self.to_torch, data)))
 
 class RolloutBuffer(BaseBuffer):
     """
