@@ -10,6 +10,7 @@ from stable_baselines3.sac import SAC
 from stable_baselines3.td3 import TD3
 from stable_baselines3.offpac import OffPAC
 from stable_baselines3.oncapo import OnCAPO
+from stable_baselines3.offcapo import OffCAPO
 
 # Read version from file
 version_file = os.path.join(os.path.dirname(__file__), "version.txt")

@@ -10,7 +10,7 @@ import numpy as np
 import torch as th
 
 from stable_baselines3.common.base_class import BaseAlgorithm
-from stable_baselines3.common.buffers import DictReplayBuffer, ReplayBuffer
+from stable_baselines3.common.buffers import DictReplayBuffer, ReplayBuffer, TrajectoryBuffer
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
 from stable_baselines3.common.policies import BasePolicy
@@ -185,6 +185,16 @@ class OffPolicyAlgorithm(BaseAlgorithm):
                 self.replay_buffer_class = DictReplayBuffer
             else:
                 self.replay_buffer_class = ReplayBuffer
+        
+        elif self.replay_buffer_class == TrajectoryBuffer:
+            self.replay_buffer = TrajectoryBuffer(
+                self.buffer_size + (self.n_envs-self.buffer_size % self.n_envs),
+                self.train_freq,
+                self.observation_space,
+                self.action_space,
+                self.device,
+                self.n_envs
+            )
 
         elif self.replay_buffer_class == HerReplayBuffer:
             assert self.env is not None, "You must pass an environment when using `HerReplayBuffer`"

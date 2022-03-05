@@ -137,8 +137,6 @@ class OnCAPO(OnPolicyAlgorithm):
 
             # Policy gradient loss
 
-            # policy_loss = -(advantages * log_prob).mean()
-
             thetas = self.policy.get_theta(rollout_data.observations)
             # updating_thetas = th.gather(thetas, 1, actions.reshape(-1,1).long()) 
             with th.no_grad():
