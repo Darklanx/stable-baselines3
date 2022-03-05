@@ -280,6 +280,9 @@ class SoftmaxCategoricalDistribution(Distribution):
 
     def log_prob(self, actions: th.Tensor) -> th.Tensor:
         return self.distribution.log_prob(actions)
+    
+    def probs(self) -> th.Tensor:
+        return self.distribution.probs
 
     def entropy(self) -> th.Tensor:
         return self.distribution.entropy()
