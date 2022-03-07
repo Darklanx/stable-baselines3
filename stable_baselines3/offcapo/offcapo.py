@@ -138,6 +138,8 @@ class OffCAPO(OffPolicyAlgorithm):
 
     def _create_aliases(self) -> None:
         self.action_net = self.policy.action_net
+        self.q_net = self.policy.q_net
+        self.q_net_target =self.policy.q_net_target
         # self.action_target = self.policy.action_target
         # self.critic = self.policy.critic
         # self.critic_target = self.policy.critic_target
@@ -339,7 +341,7 @@ class OffCAPO(OffPolicyAlgorithm):
                 with th.no_grad():
                     if idx == self.train_freq.frequency - 1:
                         
-                        next_Q = self.policy.compute_value(replay_data.next_observations[:, -1]).squeeze()
+                        next_Q = self.policy.compute_value(replay_data.next_observations[:, -1], use_target=True).squeeze()
                         # print(next_Q)
                     else:
                         next_Q = Q_ret[:, idx+1]
@@ -352,11 +354,11 @@ class OffCAPO(OffPolicyAlgorithm):
             # print(Q_ret[:, idx])
             # print(r)
             # # Get current Q-values estimates for each critic network
-            current_q_values = self.policy.compute_Q(replay_data.observations, replay_data.actions)
+            current_q_values = self.policy.compute_Q(replay_data.observations, replay_data.actions, use_target=False)
             # Compute Advantage
             with th.no_grad():
 
-                current_v_values = self.policy.compute_value(replay_data.observations)
+                current_v_values = self.policy.compute_value(replay_data.observations, use_target=True)
                 assert current_v_values.shape == current_q_values.shape, f"current_v_values.shape: {current_v_values.shape}"
 
                 advantages = current_q_values - current_v_values
@@ -412,7 +414,7 @@ class OffCAPO(OffPolicyAlgorithm):
             # actor_loss.backward()
             # self.actor.optimizer.step()
 
-            # polyak_update(self.critic.parameters(), self.critic_target.parameters(), self.tau)
+            polyak_update(self.q_net.parameters(), self.q_net_target.parameters(), self.tau)
             # polyak_update(self.action_net.parameters(), self.action_target.parameters(), self.tau)
             
             self.policy.optimizer.zero_grad()

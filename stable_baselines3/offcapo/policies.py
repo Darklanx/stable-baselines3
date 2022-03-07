@@ -225,7 +225,11 @@ class OffCAPOMlpPolicy(BasePolicy):
             raise NotImplementedError(f"Unsupported distribution '{self.action_dist}'.")
         
         self.q_net = nn.Linear(self.mlp_extractor.latent_dim_vf, self.action_space.n)
-        self.value_net = nn.Linear(self.mlp_extractor.latent_dim_vf, 1)
+        self.q_net_target = nn.Linear(self.mlp_extractor.latent_dim_vf, self.action_space.n)
+        self.q_net_target.load_state_dict(self.q_net.state_dict())
+        for param in self.q_net_target.parameters():
+            param.requires_grad = False
+        # self.value_net = nn.Linear(self.mlp_extractor.latent_dim_vf, 1)
         # Init weights: use orthogonal initialization
         # with small initial weight for the output
         if self.ortho_init:
@@ -237,7 +241,7 @@ class OffCAPOMlpPolicy(BasePolicy):
                 self.features_extractor: np.sqrt(2),
                 self.mlp_extractor: np.sqrt(2),
                 self.action_net: 0.01,
-                self.value_net: 1,
+                self.q_net: 1,
             }
             for module, gain in module_gains.items():
                 module.apply(partial(self.init_weights, gain=gain))
@@ -264,44 +268,30 @@ class OffCAPOMlpPolicy(BasePolicy):
         log_prob = distribution.log_prob(actions)
         return actions, values, log_prob
     
-    def compute_Q(self, obs: th.Tensor, actions: th.Tensor = None):
-        if len(obs.shape) == 3:
-            n_traj, traj_length = obs.shape[0], obs.shape[1]
-        elif len(obs.shape) == 2:
-            n_traj = 1
-            traj_length = obs.shape[0]
-
-        
+    def compute_Q(self, obs: th.Tensor, actions: th.Tensor = None, use_target=True):
+        q_net = self.q_net_target if use_target else self.q_net
+        return_shape = tuple(obs.shape[0 : len(obs.shape) - len(self.observation_space.shape)])
         features = self.extract_features(obs.reshape((-1,)+ self.observation_space.shape))
 
         latent_pi, latent_vf = self.mlp_extractor(features)
         if actions is not None:
-            Q = self.q_net(latent_vf).reshape((n_traj, traj_length, self.action_space.n))
+            Q = q_net(latent_vf).reshape(return_shape +  (self.action_space.n, ))
             return th.gather(Q, dim=-1, index=actions.unsqueeze(-1)).squeeze()
         else:
-            return self.q_net(latent_vf).reshape((n_traj, traj_length, self.action_space.n)) 
+            return q_net(latent_vf).reshape(return_shape + (self.action_space.n, )) 
     
-    def compute_value(self, obs: th.Tensor):
-        if len(obs.shape) == 2:
-            n_envs = obs.shape[0]
-            traj_len = 1
-        elif len(obs.shape) == 3:
-            n_envs = obs.shape[0]
-            traj_len = obs.shape[1]
-        else:
-            raise ValueError
-
+    def compute_value(self, obs: th.Tensor, use_target=True):
+        q_net = self.q_net_target if use_target else self.q_net
+        return_shape = tuple(obs.shape[0 : len(obs.shape) - len(self.observation_space.shape)])
         features = self.extract_features(obs.reshape((-1,)+ self.observation_space.shape))
         latent_pi, latent_vf = self.mlp_extractor(features)
         action_probs = th.nn.functional.softmax(self.action_net(latent_pi),dim=1)
         # action_probs = distribution.probs()
         
-        Q = self.q_net(latent_vf).reshape((-1, self.action_space.n))
+        Q = q_net(latent_vf).reshape((-1, self.action_space.n))
         V = th.sum(Q * action_probs, dim=-1)
-        if traj_len == None:
-            return V
-        else:
-            return V.reshape((n_envs, traj_len))
+ 
+        return V.reshape(return_shape)
         
     def _get_action_dist_from_latent(self, latent_pi: th.Tensor) -> Distribution:
         """
@@ -370,16 +360,21 @@ class OffCAPOMlpPolicy(BasePolicy):
         return self._get_action_dist_from_latent(latent_pi)
     
     def get_theta(self, obs: th.Tensor) -> th.Tensor:
-        if len(obs.shape) == 3 :
-            # print(obs.shape)
-            batch_size, traj_length = obs.shape[0], obs.shape[1]
-            obs = obs.reshape((-1,) + self.observation_space.shape)
-        else:
-            raise ValueError
+        batch_size, traj_length = obs.shape[0], obs.shape[1]
+        # print(obs.shape)
+        obs = obs.reshape((-1,) + self.observation_space.shape)
+        # if len(obs.shape) == 3 :
+        #     # print(obs.shape)
+        #     batch_size, traj_length = obs.shape[0], obs.shape[1]
+        #     obs = obs.reshape((-1,) + self.observation_space.shape)
+        # else:
+        #     pass
+        #     print(self.observation_space.shape)
+        #     raise ValueError(f"get obs with shape {obs.shape}")
         features = self.extract_features(obs)
         latent_pi = self.mlp_extractor.forward_actor(features)
         thetas = self.action_net(latent_pi)
-        return thetas.reshape((batch_size, traj_length, -1))
+        return thetas.reshape((batch_size, traj_length, self.action_space.n))
 
     def predict_values(self, obs: th.Tensor) -> th.Tensor:
         """
