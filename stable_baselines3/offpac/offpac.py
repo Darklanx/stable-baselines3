@@ -94,11 +94,7 @@ class OffPAC(OffPolicyAlgorithm):
             share=share
         )
 
-
         self.save_path = save_path
-
-        # self.log_sign_dif_file = open(os.path.join(self.save_path, 'sign.txt'), 'a+', buffering=1)
-
         self.use_mse = use_mse
         self.use_v_net = use_v_net
         self.behav_tau = behav_tau
@@ -144,8 +140,7 @@ class OffPAC(OffPolicyAlgorithm):
 
     def __getstate__(self):
         state = self.__dict__.copy()
-        # Don't pickle log_sign_dif_file
-        del state["log_sign_dif_file"]
+
         return state
             
     def _setup_model(self) -> None:
@@ -749,11 +744,12 @@ class OffPAC(OffPolicyAlgorithm):
             '''
 
             if self.train_mode != 'policy': # if not policy only 
-                value_loss = F.mse_loss(th.flatten(traj_Q_values), th.flatten(Q_rets), reduction='mean').to(self.device)
+                value_loss = F.mse_loss(th.flatten(traj_Q_values), th.flatten(Q_rets), reduction='mean').to(self.device) * self.vf_coef
+                self.logger.record("train/value_loss", value_loss.item())
 
             else:
                 value_loss = th.tensor([0.0]).to(self.device)
-            self.logger.record("train/value_loss", value_loss.item())
+            
 
             if self.train_mode != 'value': # if not value only 
                 if not self.KL:
@@ -841,7 +837,7 @@ class OffPAC(OffPolicyAlgorithm):
                     self.logger.record("train/alpha_max", alpha.max().item())
                     self.logger.record("train/alpha_min", alpha.min().item())
                     self.logger.record("train/old_prob_max", th.max(old_distribution.probs).item())
-                    self.logger.record("train/new_prob_max", th.max(new_distribution.probs))
+                    self.logger.record("train/new_prob_max", th.max(new_distribution.probs).item())
 
                 self.logger.record("train/policy_loss", policy_loss.item())
 
@@ -849,7 +845,7 @@ class OffPAC(OffPolicyAlgorithm):
                 policy_loss = th.tensor([0.0]).to(self.device)
             
 
-            value_losses.append((self.vf_coef * value_loss).item())
+            value_losses.append(value_loss.item())
 
 
             policy_losses.append(policy_loss.item())
@@ -885,7 +881,7 @@ class OffPAC(OffPolicyAlgorithm):
             # loss = policy_loss + on_policy_policy_loss + self.vf_coef * (value_loss + on_policy_value_loss) / 2
             
             # loss = on_policy_policy_loss + self.vf_coef * (on_policy_value_loss)  # a2c
-            loss = policy_loss + self.vf_coef * (value_loss) 
+            loss = policy_loss + value_loss
             # loss = on_policy_policy_loss
             # print(th.sum(th.isinf(loss)))
             
@@ -902,7 +898,7 @@ class OffPAC(OffPolicyAlgorithm):
                 print("max prob new: ", th.max(new_distribution.probs))
                 print("INF detected in loss")
                 print("policy_loss: ", policy_loss)
-                print("vf_coef * value_loss: ", self.vf_coef * value_loss)
+                print("value_loss: ", value_loss)
                 exit(-1)
             # loss=policy_loss
             
@@ -925,22 +921,22 @@ class OffPAC(OffPolicyAlgorithm):
                         latent, _ = self.policy.get_policy_latent(traj_states.view(-1, traj_states.size(-1)), use_behav=False)
                         backward_distribution = Categorical(probs=F.softmax(latent.view(-1, self.action_space.n)[update_mask], dim=1))
 
-                        print("old latent: ")
-                        print(traj_old_latents.view(-1, self.action_space.n)[update_mask][0:5])
-                        print("new latent: ")
-                        print(latent.view(-1, self.action_space.n)[update_mask][0:5])
-                        print("Old dist: ")
-                        print(old_distribution.probs[0:5] * 100)
-                        print("Update dist: ")
-                        print(backward_distribution.probs[0:5]  * 100)
-                        print("Target dist:")
-                        print(new_distribution.probs[0:5]  * 100)
+                        # print("old latent: ")
+                        # print(traj_old_latents.view(-1, self.action_space.n)[update_mask][0:5])
+                        # print("new latent: ")
+                        # print(latent.view(-1, self.action_space.n)[update_mask][0:5])
+                        # print("Old dist: ")
+                        # print(old_distribution.probs[0:5] * 100)
+                        # print("Update dist: ")
+                        # print(backward_distribution.probs[0:5]  * 100)
+                        # print("Target dist:")
+                        # print(new_distribution.probs[0:5]  * 100)
                         
                         
                         correct = 0
                         incorrect = 0
                 
-                        self.log_sign_dif_file.write("\n")
+
                         np.set_printoptions(formatter={'float': '{: 0.4f}'.format})
                         for _old, _new, _target in zip((old_distribution.probs).cpu().numpy(), (new_distribution.probs).cpu().numpy(), backward_distribution.probs.cpu().numpy()):
                             _abs_update = np.sign(_target[0] - _old[0])
@@ -951,10 +947,7 @@ class OffPAC(OffPolicyAlgorithm):
                                 correct += 1
                             else:
                                 incorrect += 1
-                            self.log_sign_dif_file.write("{} -> {}   :   {} {}\n".format(_old, _new, _target, hint))
-                        # self.log_sign_dif_file.write("old: {} \n".format(old_distribution.probs* 100))
-                        # self.log_sign_dif_file.write("new: {} \n".format(new_distribution.probs* 100))
-                        self.log_sign_dif_file.write("correct: {}, incorrect: {}\n".format(correct, incorrect))
+
 
             return
         else:
